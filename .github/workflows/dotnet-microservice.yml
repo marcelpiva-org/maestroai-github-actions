@@ -189,21 +189,12 @@ jobs:
         echo "primary_tag=${VERSION}" >> $GITHUB_OUTPUT
         echo "version_tag=${VERSION}" >> $GITHUB_OUTPUT
 
-  # Build Multi-Architecture Containers (Matrix Strategy)
-  build-containers:
-    name: Build ${{ matrix.arch }} Container
+  # Build AMD64 Container
+  build-amd64:
+    name: Build AMD64 Container
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [setup-dependencies]
-    if: |
-      always() &&
-      needs.setup-dependencies.result == 'success' &&
-      (
-        (matrix.arch == 'amd64' && inputs.build_amd64 == true) ||
-        (matrix.arch == 'arm64' && inputs.build_arm64 == true)
-      )
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
+    if: inputs.build_amd64 == true
 
     steps:
     - name: Checkout code
@@ -215,7 +206,28 @@ jobs:
         registry: ${{ env.REGISTRY }}
         image_name: ${{ env.IMAGE_NAME }}
         tag: ${{ needs.setup-dependencies.outputs.version_tag }}
-        architecture: ${{ matrix.arch }}
+        architecture: amd64
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+  # Build ARM64 Container
+  build-arm64:
+    name: Build ARM64 Container
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+    if: inputs.build_arm64 == true
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build Docker Container
+      uses: marcelpiva-org/maestroai-github-actions/actions/docker-build@main
+      with:
+        registry: ${{ env.REGISTRY }}
+        image_name: ${{ env.IMAGE_NAME }}
+        tag: ${{ needs.setup-dependencies.outputs.version_tag }}
+        architecture: arm64
         github_token: ${{ secrets.GITHUB_TOKEN }}
         packages_token: ${{ secrets.PACKAGES_TOKEN }}
 
@@ -223,8 +235,8 @@ jobs:
   create-manifest:
     name: Create Multi-Arch Manifest
     runs-on: [self-hosted, linux, arm64, maestroai]
-    needs: [setup-dependencies, build-containers]
-    if: always() && (inputs.build_amd64 == true || inputs.build_arm64 == true)
+    needs: [setup-dependencies, build-amd64, build-arm64]
+    if: always() && (needs.build-amd64.result == 'success' || needs.build-arm64.result == 'success')
 
     steps:
     - name: Log in to Container Registry
@@ -238,11 +250,11 @@ jobs:
       run: |
         # Build list of available architecture images
         IMAGES=""
-        if [[ "${{ inputs.build_amd64 }}" == "true" ]]; then
+        if [[ "${{ needs.build-amd64.result }}" == "success" ]]; then
           IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64"
           echo "✅ AMD64 image available"
         fi
-        if [[ "${{ inputs.build_arm64 }}" == "true" ]]; then
+        if [[ "${{ needs.build-arm64.result }}" == "success" ]]; then
           IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64"
           echo "✅ ARM64 image available"
         fi
