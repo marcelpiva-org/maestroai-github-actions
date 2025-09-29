@@ -559,7 +559,7 @@ jobs:
     name: Update Infrastructure Repository
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [version-and-release, create-manifest]
-    if: ${{ inputs.update_infrastructure && github.ref == 'refs/heads/main' && needs.create-manifest.result == 'success' }}
+    if: ${{ inputs.update_infrastructure && needs.create-manifest.result == 'success' }}
 
     steps:
     - name: Update Infrastructure
