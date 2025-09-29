@@ -16,11 +16,20 @@ runs:
       shell: bash
       run: |
         # Find solution file
-        if [ -f "${{ inputs.solution_path }}/*.sln" ]; then
-          SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -n 1)
+        SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" 2>/dev/null | head -n 1)
+
+        if [ -n "$SOLUTION_FILE" ]; then
           echo "Building solution: $SOLUTION_FILE"
           dotnet build "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --no-restore
         else
-          echo "No solution file found, building all projects"
-          dotnet build --configuration ${{ inputs.configuration }} --no-restore
+          echo "No solution file found in ${{ inputs.solution_path }}, trying current directory"
+          SOLUTION_FILE=$(find . -name "*.sln" 2>/dev/null | head -n 1)
+
+          if [ -n "$SOLUTION_FILE" ]; then
+            echo "Building solution: $SOLUTION_FILE"
+            dotnet build "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --no-restore
+          else
+            echo "No solution file found, building all projects"
+            dotnet build --configuration ${{ inputs.configuration }} --no-restore
+          fi
         fi

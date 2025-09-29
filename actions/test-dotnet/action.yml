@@ -24,8 +24,9 @@ runs:
           echo "Test projects found, running tests..."
 
           # Find solution file
-          if [ -f "${{ inputs.solution_path }}/*.sln" ]; then
-            SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -n 1)
+          SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" 2>/dev/null | head -n 1)
+
+          if [ -n "$SOLUTION_FILE" ]; then
             echo "Testing solution: $SOLUTION_FILE"
 
             if [ "${{ inputs.collect_coverage }}" = "true" ]; then
@@ -34,12 +35,25 @@ runs:
               dotnet test "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --verbosity normal
             fi
           else
-            echo "No solution file found, testing all projects"
+            echo "No solution file found in ${{ inputs.solution_path }}, trying current directory"
+            SOLUTION_FILE=$(find . -name "*.sln" 2>/dev/null | head -n 1)
 
-            if [ "${{ inputs.collect_coverage }}" = "true" ]; then
-              dotnet test --configuration ${{ inputs.configuration }} --verbosity normal --collect:"XPlat Code Coverage"
+            if [ -n "$SOLUTION_FILE" ]; then
+              echo "Testing solution: $SOLUTION_FILE"
+
+              if [ "${{ inputs.collect_coverage }}" = "true" ]; then
+                dotnet test "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --verbosity normal --collect:"XPlat Code Coverage"
+              else
+                dotnet test "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --verbosity normal
+              fi
             else
-              dotnet test --configuration ${{ inputs.configuration }} --verbosity normal
+              echo "No solution file found, testing all projects"
+
+              if [ "${{ inputs.collect_coverage }}" = "true" ]; then
+                dotnet test --configuration ${{ inputs.configuration }} --verbosity normal --collect:"XPlat Code Coverage"
+              else
+                dotnet test --configuration ${{ inputs.configuration }} --verbosity normal
+              fi
             fi
           fi
         else
