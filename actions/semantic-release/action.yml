@@ -1,0 +1,31 @@
+name: 'Semantic Release'
+description: 'Automated versioning and release using semantic-release'
+inputs:
+  github_token:
+    description: 'GitHub token for releases'
+    required: true
+  semantic_version:
+    description: 'Semantic release version'
+    required: false
+    default: '22'
+outputs:
+  version:
+    description: 'New release version'
+    value: ${{ steps.semantic.outputs.new_release_version }}
+  released:
+    description: 'Whether a new release was published'
+    value: ${{ steps.semantic.outputs.new_release_published }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Semantic Release
+      id: semantic
+      uses: cycjimmy/semantic-release-action@v4
+      with:
+        semantic_version: ${{ inputs.semantic_version }}
+        extra_plugins: |
+          @semantic-release/changelog@6
+          @semantic-release/git@10
+          conventional-changelog-conventionalcommits@7
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}

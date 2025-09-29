@@ -1,0 +1,70 @@
+name: 'Update Infrastructure'
+description: 'Update infrastructure repository with new image tags'
+inputs:
+  service_name:
+    description: 'Service name'
+    required: true
+  version:
+    description: 'New version to deploy'
+    required: true
+  infrastructure_repo:
+    description: 'Infrastructure repository'
+    required: false
+    default: 'marcelpiva-org/maestroai-infrastructure'
+  packages_token:
+    description: 'Token for infrastructure repository access'
+    required: true
+  registry:
+    description: 'Container registry'
+    required: false
+    default: 'ghcr.io'
+  image_org:
+    description: 'Image organization'
+    required: false
+    default: 'marcelpiva-org'
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout infrastructure repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.infrastructure_repo }}
+        token: ${{ inputs.packages_token }}
+        path: infrastructure
+
+    - name: Update image tag in Kustomize
+      shell: bash
+      run: |
+        cd infrastructure
+
+        # Update development environment
+        DEPLOYMENT_FILE="kubernetes/argocd/base/${{ inputs.service_name }}-deployment.yaml"
+
+        if [ -f "$DEPLOYMENT_FILE" ]; then
+          echo "Updating $DEPLOYMENT_FILE"
+          sed -i "s|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}:.*|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}:${{ inputs.version }}|g" "$DEPLOYMENT_FILE"
+          echo "Updated image tags to version: ${{ inputs.version }}"
+        else
+          echo "Deployment file not found: $DEPLOYMENT_FILE"
+          exit 1
+        fi
+
+    - name: Commit and push changes
+      shell: bash
+      run: |
+        cd infrastructure
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "chore(${{ inputs.service_name }}): update image tag to v${{ inputs.version }}" \
+                     -m "" \
+                     -m "Generated with GitHub Actions" \
+                     -m "" \
+                     -m "Co-Authored-By: GitHub Action <noreply@github.com>"
+          git push
+          echo "✅ Infrastructure repository updated with new image tag"
+        fi

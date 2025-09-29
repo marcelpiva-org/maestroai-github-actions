@@ -1,0 +1,26 @@
+name: 'Build .NET Solution'
+description: 'Build .NET solution with optimized configuration'
+inputs:
+  solution_path:
+    description: 'Path to the solution file'
+    required: false
+    default: 'src'
+  configuration:
+    description: 'Build configuration'
+    required: false
+    default: 'Release'
+runs:
+  using: 'composite'
+  steps:
+    - name: Build solution
+      shell: bash
+      run: |
+        # Find solution file
+        if [ -f "${{ inputs.solution_path }}/*.sln" ]; then
+          SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -n 1)
+          echo "Building solution: $SOLUTION_FILE"
+          dotnet build "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --no-restore
+        else
+          echo "No solution file found, building all projects"
+          dotnet build --configuration ${{ inputs.configuration }} --no-restore
+        fi

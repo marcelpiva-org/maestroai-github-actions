@@ -1,0 +1,47 @@
+name: 'Test .NET Solution'
+description: 'Run .NET tests with code coverage'
+inputs:
+  solution_path:
+    description: 'Path to the solution file'
+    required: false
+    default: 'src'
+  configuration:
+    description: 'Test configuration'
+    required: false
+    default: 'Release'
+  collect_coverage:
+    description: 'Collect code coverage'
+    required: false
+    default: 'true'
+runs:
+  using: 'composite'
+  steps:
+    - name: Run tests
+      shell: bash
+      run: |
+        # Check if test projects exist
+        if [ -d "tests" ] || find . -name "*Test*.csproj" -o -name "*Tests.csproj" | grep -q .; then
+          echo "Test projects found, running tests..."
+
+          # Find solution file
+          if [ -f "${{ inputs.solution_path }}/*.sln" ]; then
+            SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -n 1)
+            echo "Testing solution: $SOLUTION_FILE"
+
+            if [ "${{ inputs.collect_coverage }}" = "true" ]; then
+              dotnet test "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --verbosity normal --collect:"XPlat Code Coverage"
+            else
+              dotnet test "$SOLUTION_FILE" --configuration ${{ inputs.configuration }} --verbosity normal
+            fi
+          else
+            echo "No solution file found, testing all projects"
+
+            if [ "${{ inputs.collect_coverage }}" = "true" ]; then
+              dotnet test --configuration ${{ inputs.configuration }} --verbosity normal --collect:"XPlat Code Coverage"
+            else
+              dotnet test --configuration ${{ inputs.configuration }} --verbosity normal
+            fi
+          fi
+        else
+          echo "No test projects found, skipping tests"
+        fi

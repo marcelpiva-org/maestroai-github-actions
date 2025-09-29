@@ -1,0 +1,73 @@
+name: 'Setup .NET Environment'
+description: 'Setup .NET SDK with caching and GitHub Packages configuration'
+inputs:
+  dotnet_version:
+    description: 'The .NET version to install'
+    required: false
+    default: '8.0'
+  solution_path:
+    description: 'Path to the solution file'
+    required: false
+    default: 'src'
+  packages_token:
+    description: 'GitHub Packages token'
+    required: false
+outputs:
+  cache-hit:
+    description: 'Cache hit indicator'
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup .NET
+      shell: bash
+      run: |
+        # Install .NET in user directory
+        mkdir -p $HOME/.dotnet
+        wget -O dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+        chmod +x dotnet-install.sh
+        ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+        echo "$HOME/.dotnet" >> $GITHUB_PATH
+        echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+    - name: Cache NuGet packages and build artifacts
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~/.dotnet/tools
+          **/bin
+          **/obj
+        key: ${{ runner.os }}-dotnet-complete-${{ hashFiles('**/*.csproj', '**/packages.lock.json', '**/*.props', '**/*.targets') }}
+        restore-keys: |
+          ${{ runner.os }}-dotnet-complete-
+          ${{ runner.os }}-dotnet-
+          ${{ runner.os }}-nuget-
+
+    - name: Configure GitHub Packages
+      if: inputs.packages_token != ''
+      shell: bash
+      run: |
+        # Remove existing github source if it exists
+        dotnet nuget remove source github || echo "No existing github source found"
+
+        # Add GitHub Packages source with authentication
+        dotnet nuget add source --username ${{ github.actor }} --password ${{ inputs.packages_token }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/marcelpiva-org/index.json"
+
+        # List sources for debugging
+        echo "Configured NuGet sources:"
+        dotnet nuget list source
+
+    - name: Restore dependencies
+      shell: bash
+      run: |
+        # Find solution file
+        if [ -f "${{ inputs.solution_path }}/*.sln" ]; then
+          SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -n 1)
+          echo "Found solution: $SOLUTION_FILE"
+          dotnet restore "$SOLUTION_FILE"
+        else
+          echo "No solution file found, restoring all projects"
+          dotnet restore
+        fi
