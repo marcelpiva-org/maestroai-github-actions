@@ -1,34 +1,45 @@
-# MaestroAI GitHub Workflows
+# MaestroAI GitHub Actions & Workflows
 
-Central repository for reusable GitHub workflows and organization-wide configurations for MaestroAI microservices.
+Central repository for modular GitHub Actions and reusable workflows for the MaestroAI ecosystem.
 
-## 🚀 Ultra-Optimized .NET Microservice CI/CD
+## 🏗️ Modular Architecture
 
-This repository provides a comprehensive, ultra-optimized CI/CD workflow for .NET microservices with:
+This repository provides a complete **modular CI/CD system** built with:
 
-- **⚡ Maximum Parallelization**: Matrix builds, parallel test/build execution
-- **💾 Advanced Caching**: Complete dependency and build artifact caching
-- **🐳 Multi-Architecture Containers**: ARM64 and AMD64 support
-- **🔄 GitOps Integration**: Automatic infrastructure updates
-- **📦 Semantic Versioning**: Automated releases with conventional commits
+- **🧩 Composite Actions**: Reusable building blocks
+- **🔄 Reusable Workflows**: Complete pipelines for microservices and libraries
+- **⚡ Local References**: Fast execution with `./actions/` imports
 - **🎯 Zero Configuration**: Works out-of-the-box for most .NET projects
 
-## 📊 Performance
+## 📦 Composite Actions
 
-**Before**: Traditional CI/CD (~15-20 minutes)
-**After**: Ultra-optimized workflow (~5-6 minutes)
+### Core Actions
 
-**Improvements**:
-- 🚀 ~70% faster execution time
-- 💪 4x more parallel execution
-- 🎯 Intelligent caching strategies
-- ⚡ Matrix-based container builds
+| Action | Description | Usage |
+|--------|-------------|-------|
+| `setup-dotnet` | .NET SDK setup + caching + GitHub Packages | Required for all jobs |
+| `build-dotnet` | Build solution with Release configuration | Build step |
+| `test-dotnet` | Run tests with code coverage | Test execution |
+| `semantic-release` | Automated versioning with conventional commits | Release management |
 
-## 🔧 Usage
+### Container Actions
 
-### Basic Usage
+| Action | Description | Usage |
+|--------|-------------|-------|
+| `docker-build` | Multi-arch containers (ARM64/AMD64) + caching | Container builds |
+| `update-infrastructure` | GitOps Kustomize updates | Infrastructure sync |
 
-Create `.github/workflows/ci-cd.yml` in your microservice repository:
+### Library Actions
+
+| Action | Description | Usage |
+|--------|-------------|-------|
+| `nuget-package` | NuGet packaging + GitHub Packages publishing | Library releases |
+
+## 🔄 Reusable Workflows
+
+### 🚀 Microservices: `dotnet-microservice.yml`
+
+Complete CI/CD pipeline for .NET microservices with containers, GitOps, and multi-arch builds.
 
 ```yaml
 name: CI/CD Pipeline
@@ -41,38 +52,13 @@ on:
 
 jobs:
   build-deploy:
-    uses: marcelpiva-org/.github/.github/workflows/dotnet-microservice.yml@main
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-microservice.yml@main
     with:
       service_name: knowledge  # Required: your service name
     secrets: inherit
 ```
 
-### Advanced Configuration
-
-```yaml
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
-
-jobs:
-  build-deploy:
-    uses: marcelpiva-org/.github/.github/workflows/dotnet-microservice.yml@main
-    with:
-      service_name: knowledge
-      dotnet_version: '8.0'
-      solution_path: 'src'
-      has_tests: true
-      enable_semantic_release: true
-      update_infrastructure: true
-      registry: 'ghcr.io'
-    secrets: inherit
-```
-
-## 📋 Parameters
+#### Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -84,87 +70,190 @@ jobs:
 | `update_infrastructure` | ❌ No | `true` | Update infrastructure repository |
 | `registry` | ❌ No | `ghcr.io` | Container registry |
 
-## 🔒 Required Secrets
+### 📚 Libraries: `dotnet-library.yml`
 
-The workflow requires these secrets to be available:
+Specialized pipeline for .NET libraries with NuGet packaging and GitHub Packages publishing.
 
-- `GITHUB_TOKEN` (automatically provided)
-- `PACKAGES_TOKEN` (optional: for private NuGet packages)
+```yaml
+name: Library CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-publish:
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-library.yml@main
+    with:
+      library_name: common  # Required: your library name
+    secrets: inherit
+```
+
+#### Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `library_name` | ✅ Yes | - | Library name (e.g., common, shared, contracts) |
+| `dotnet_version` | ❌ No | `8.0` | .NET version to use |
+| `project_path` | ❌ No | `src` | Path to the project file |
+| `has_tests` | ❌ No | `true` | Whether the library has tests |
+| `enable_semantic_release` | ❌ No | `true` | Enable semantic versioning |
+| `publish_nuget` | ❌ No | `true` | Publish NuGet package |
 
 ## 🏗️ Architecture
 
-### Jobs Execution Flow
+### Microservice Pipeline Flow
 
 ```mermaid
 graph TD
-    A[Setup Dependencies & Tags] --> B[Build Solution]
+    A[Setup Dependencies] --> B[Build Solution]
     A --> C[Run Tests]
-    A --> D[Build AMD64 Container]
-    A --> E[Build ARM64 Container]
+    A --> D[Build ARM64 Container]
+    A --> E[Build AMD64 Container]
 
-    B --> F[Version & Release]
+    B --> F[Semantic Release]
     C --> F
 
-    D --> G[Create Multi-Arch Manifest]
+    D --> G[Multi-Arch Manifest]
     E --> G
 
     F --> H[Update Infrastructure]
     G --> H
-    H --> I[Trigger ArgoCD Sync]
+    H --> I[ArgoCD Sync]
 ```
 
-### Key Optimizations
+### Library Pipeline Flow
 
-1. **Matrix Container Builds**: AMD64 and ARM64 build simultaneously
-2. **Enhanced Caching**: Comprehensive cache for NuGet, .NET tools, and build artifacts
-3. **Job Consolidation**: Multiple operations per job to reduce overhead
-4. **Intelligent Dependencies**: Optimized job dependency chain
-5. **Parallel Execution**: Build, test, and version operations run concurrently
+```mermaid
+graph TD
+    A[Setup Dependencies] --> B[Build Library]
+    A --> C[Run Tests]
 
-## 🎯 Supported Microservices
+    B --> D[Semantic Release]
+    C --> D
 
-This workflow is designed for MaestroAI microservices:
+    D --> E[Package NuGet]
+    E --> F[Publish to GitHub Packages]
+    F --> G[Create GitHub Release]
+```
 
-- ✅ maestroai-knowledge-app
-- ✅ maestroai-chat-app
-- ✅ maestroai-agents-app
-- ✅ maestroai-gateway-app
-- ✅ maestroai-identity-app
-- ✅ maestroai-orchestration-app
-- ✅ maestroai-providers-app
-- ✅ maestroai-cache-app
-- 🔄 maestroai-react-app (requires different workflow)
+## 📊 Performance Optimizations
+
+- **⚡ Parallel Execution**: Build, test, and container creation run simultaneously
+- **💾 Advanced Caching**: NuGet packages, .NET tools, build artifacts, Docker layers
+- **🏗️ Matrix Builds**: ARM64 and AMD64 containers build in parallel
+- **🎯 Local Actions**: No external downloads, faster execution
+- **🧠 Intelligent Dependencies**: Optimized job dependency chains
+
+## 🎯 Supported Projects
+
+### Microservices ✅
+
+- maestroai-knowledge-app
+- maestroai-chat-app
+- maestroai-agents-app
+- maestroai-gateway-app
+- maestroai-identity-app
+- maestroai-orchestration-app
+- maestroai-providers-app
+- maestroai-cache-app
+
+### Libraries ✅
+
+- maestroai-common
+- maestroai-shared
+- maestroai-contracts
+- Any .NET library project
+
+### Frontend 🔄
+
+- maestroai-react-app (requires different workflow)
 
 ## 🔧 Prerequisites
 
-- Self-hosted GitHub runners with labels: `[self-hosted, linux, arm64, maestroai]`
-- Docker with BuildKit support
-- Access to GitHub Container Registry (GHCR)
-- Infrastructure repository: `marcelpiva-org/maestroai-infrastructure`
+- **Runners**: Self-hosted GitHub runners with labels `[self-hosted, linux, arm64, maestroai]`
+- **Docker**: BuildKit support for multi-arch builds
+- **Registry**: Access to GitHub Container Registry (GHCR)
+- **Infrastructure**: `marcelpiva-org/maestroai-infrastructure` repository
+- **Secrets**: `PACKAGES_TOKEN` for private NuGet packages
 
-## 📦 Container Images
+## 🔒 Required Secrets
 
-Generated container images are pushed to:
-- Registry: `ghcr.io/marcelpiva-org/maestro-{service_name}`
-- Tags: `latest`, version tags, branch tags
-- Architectures: `linux/amd64`, `linux/arm64`
+| Secret | Description | Required For |
+|--------|-------------|--------------|
+| `GITHUB_TOKEN` | GitHub API access (auto-provided) | All workflows |
+| `PACKAGES_TOKEN` | Private NuGet packages + infrastructure updates | Private packages, GitOps |
+
+## 📦 Generated Artifacts
+
+### Container Images
+- **Registry**: `ghcr.io/marcelpiva-org/maestro-{service_name}`
+- **Tags**: `latest`, semantic versions, branch tags
+- **Architectures**: `linux/amd64`, `linux/arm64`
+
+### NuGet Packages
+- **Registry**: GitHub Packages (`https://nuget.pkg.github.com/marcelpiva-org/index.json`)
+- **Versioning**: Semantic versioning with conventional commits
+- **Visibility**: Organization-scoped packages
 
 ## 🚀 Getting Started
 
-1. **Use the workflow** in your microservice repository
-2. **Configure parameters** for your specific service
-3. **Ensure secrets** are properly set
-4. **Push to main/develop** to trigger the pipeline
+### For Microservices
 
-## 🔄 Updates
+1. Create `.github/workflows/ci-cd.yml` with microservice workflow
+2. Configure `service_name` parameter
+3. Ensure `PACKAGES_TOKEN` secret is set
+4. Push to `main` or `develop` to trigger pipeline
 
-This workflow is continuously improved. To get the latest optimizations:
-- Use `@main` to always get the latest version
-- Use specific version tags for stability: `@v1.0.0`
+### For Libraries
+
+1. Create `.github/workflows/ci-cd.yml` with library workflow
+2. Configure `library_name` parameter
+3. Ensure `PACKAGES_TOKEN` secret is set
+4. Push to `main` to trigger packaging and publishing
+
+## 🔄 Workflow Updates
+
+This modular system is continuously improved:
+
+- **Latest**: Use `@main` for cutting-edge features
+- **Stable**: Use specific version tags like `@v1.0.0`
+- **Actions**: Always use latest via local `./actions/` references
+
+## 🛠️ Development
+
+### Adding New Actions
+
+1. Create new directory under `actions/`
+2. Add `action.yml` with composite action definition
+3. Update workflows to use the new action
+4. Test with a microservice or library
+5. Document in this README
+
+### Modifying Workflows
+
+1. Update workflow files in `.github/workflows/`
+2. Test with representative repositories
+3. Update documentation and examples
+4. Version tag for stable releases
+
+## 📈 Monitoring
+
+Track pipeline performance and success rates:
+
+- **Pipeline Duration**: ~5-6 minutes (vs 15-20 minutes traditional)
+- **Success Rate**: Monitor via GitHub Actions insights
+- **Resource Usage**: ARM64 runners provide excellent performance
+- **Cache Hit Rates**: Monitor NuGet and Docker cache effectiveness
 
 ## 📞 Support
 
-For issues or improvements, create an issue in this repository or contact the DevOps team.
+- **Issues**: Create issues in this repository
+- **Discussions**: Use GitHub Discussions for questions
+- **DevOps Team**: Contact for infrastructure-related requests
+- **Documentation**: Keep this README updated with changes
 
 ---
 
