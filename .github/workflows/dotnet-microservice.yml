@@ -567,7 +567,9 @@ jobs:
     - name: Debug inputs
       run: |
         echo "update_infrastructure input: ${{ inputs.update_infrastructure }}"
+        echo "update_infrastructure type: ${{ toJSON(inputs.update_infrastructure) }}"
         echo "create-manifest result: ${{ needs.create-manifest.result }}"
+        echo "Condition result: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}"
 
     - name: Update Infrastructure
       uses: marcelpiva-org/maestroai-github-actions/actions/update-infrastructure@main
