@@ -1,0 +1,84 @@
+name: 'NuGet Package'
+description: 'Build and publish NuGet packages'
+inputs:
+  project_path:
+    description: 'Path to the project file'
+    required: false
+    default: 'src'
+  configuration:
+    description: 'Build configuration'
+    required: false
+    default: 'Release'
+  version:
+    description: 'Package version'
+    required: true
+  packages_token:
+    description: 'GitHub Packages token'
+    required: true
+  registry_url:
+    description: 'NuGet registry URL'
+    required: false
+    default: 'https://nuget.pkg.github.com/marcelpiva-org/index.json'
+outputs:
+  package_path:
+    description: 'Path to the created package'
+    value: ${{ steps.pack.outputs.package_path }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Find project file
+      id: find-project
+      shell: bash
+      run: |
+        # Find the main project file (excluding test projects)
+        if [ -f "${{ inputs.project_path }}/*.csproj" ]; then
+          PROJECT_FILE=$(find ${{ inputs.project_path }} -name "*.csproj" ! -name "*Test*.csproj" ! -name "*Tests.csproj" | head -n 1)
+        else
+          PROJECT_FILE=$(find . -name "*.csproj" ! -name "*Test*.csproj" ! -name "*Tests.csproj" | head -n 1)
+        fi
+
+        if [ -z "$PROJECT_FILE" ]; then
+          echo "❌ No project file found"
+          exit 1
+        fi
+
+        echo "📦 Found project: $PROJECT_FILE"
+        echo "project_file=$PROJECT_FILE" >> $GITHUB_OUTPUT
+
+    - name: Pack NuGet package
+      id: pack
+      shell: bash
+      run: |
+        PROJECT_FILE="${{ steps.find-project.outputs.project_file }}"
+
+        # Create package
+        dotnet pack "$PROJECT_FILE" \
+          --configuration ${{ inputs.configuration }} \
+          --no-build \
+          --output ./packages \
+          -p:PackageVersion=${{ inputs.version }} \
+          -p:Version=${{ inputs.version }}
+
+        # Find the created package
+        PACKAGE_PATH=$(find ./packages -name "*.nupkg" | head -n 1)
+
+        if [ -z "$PACKAGE_PATH" ]; then
+          echo "❌ No package created"
+          exit 1
+        fi
+
+        echo "📦 Package created: $PACKAGE_PATH"
+        echo "package_path=$PACKAGE_PATH" >> $GITHUB_OUTPUT
+
+    - name: Publish to GitHub Packages
+      shell: bash
+      run: |
+        PACKAGE_PATH="${{ steps.pack.outputs.package_path }}"
+
+        # Push to GitHub Packages
+        dotnet nuget push "$PACKAGE_PATH" \
+          --source ${{ inputs.registry_url }} \
+          --api-key ${{ inputs.packages_token }} \
+          --skip-duplicate
+
+        echo "✅ Package published to GitHub Packages"

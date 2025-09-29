@@ -1,0 +1,163 @@
+name: .NET Library CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      library_name:
+        description: 'Library name (e.g., common, shared, contracts)'
+        required: true
+        type: string
+      dotnet_version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0'
+      project_path:
+        description: 'Path to the project file'
+        required: false
+        type: string
+        default: 'src'
+      has_tests:
+        description: 'Whether the library has tests'
+        required: false
+        type: boolean
+        default: true
+      enable_semantic_release:
+        description: 'Enable semantic versioning and releases'
+        required: false
+        type: boolean
+        default: true
+      publish_nuget:
+        description: 'Publish NuGet package'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  # Setup Dependencies
+  setup-dependencies:
+    name: Setup Dependencies
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    outputs:
+      cache-hit: ${{ steps.setup.outputs.cache-hit }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for semantic versioning
+
+    - name: Setup .NET Environment
+      id: setup
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.project_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+  # Build Job (Parallel)
+  build-library:
+    name: Build Library
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.project_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: Build Library
+      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      with:
+        solution_path: ${{ inputs.project_path }}
+
+  # Test Job (Parallel)
+  run-tests:
+    name: Run Tests
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+    if: ${{ inputs.has_tests }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.project_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: Run Tests
+      uses: marcelpiva-org/maestroai-github-actions/actions/test-dotnet@main
+      with:
+        solution_path: ${{ inputs.project_path }}
+
+  # Semantic Version and Release Job
+  version-and-release:
+    name: Version and Release
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [build-library, run-tests]
+    if: ${{ inputs.enable_semantic_release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+    outputs:
+      version: ${{ steps.semantic.outputs.version }}
+      released: ${{ steps.semantic.outputs.released }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Semantic Release
+      id: semantic
+      uses: marcelpiva-org/maestroai-github-actions/actions/semantic-release@main
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Package and Publish NuGet
+  package-and-publish:
+    name: Package and Publish NuGet
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [build-library, version-and-release]
+    if: ${{ inputs.publish_nuget && github.ref == 'refs/heads/main' && needs.version-and-release.outputs.released == 'true' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.project_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: Build Library
+      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      with:
+        solution_path: ${{ inputs.project_path }}
+
+    - name: Package and Publish NuGet
+      uses: marcelpiva-org/maestroai-github-actions/actions/nuget-package@main
+      with:
+        project_path: ${{ inputs.project_path }}
+        version: ${{ needs.version-and-release.outputs.version }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: Create GitHub Release
+      if: needs.version-and-release.outputs.released == 'true'
+      run: |
+        echo "📦 NuGet package published successfully!"
+        echo "🏷️ Version: ${{ needs.version-and-release.outputs.version }}"
+        echo "📚 Library: ${{ inputs.library_name }}"
+        echo ""
+        echo "🔗 Package URL: https://github.com/marcelpiva-org/maestroai-${{ inputs.library_name }}/packages"
