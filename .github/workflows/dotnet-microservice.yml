@@ -1,0 +1,431 @@
+name: Ultra-Optimized .NET Microservice CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Microservice name (e.g., knowledge, chat, agents)'
+        required: true
+        type: string
+      dotnet_version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0'
+      solution_path:
+        description: 'Path to solution file'
+        required: false
+        type: string
+        default: 'src'
+      has_tests:
+        description: 'Whether the service has tests'
+        required: false
+        type: boolean
+        default: true
+      enable_semantic_release:
+        description: 'Enable semantic versioning and releases'
+        required: false
+        type: boolean
+        default: true
+      update_infrastructure:
+        description: 'Update infrastructure repository'
+        required: false
+        type: boolean
+        default: true
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+
+env:
+  REGISTRY: ${{ inputs.registry }}
+  IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}
+
+jobs:
+  # Setup Dependencies and Determine Tags
+  setup-dependencies:
+    name: Setup Dependencies & Tags
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    outputs:
+      dotnet-cache-hit: ${{ steps.cache.outputs.cache-hit }}
+      tags: ${{ steps.tags.outputs.tags }}
+      primary_tag: ${{ steps.tags.outputs.primary_tag }}
+      version_tag: ${{ steps.tags.outputs.version_tag }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for semantic versioning
+
+    - name: Setup .NET
+      run: |
+        # Install .NET in user directory
+        mkdir -p $HOME/.dotnet
+        wget -O dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+        chmod +x dotnet-install.sh
+        ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+        echo "$HOME/.dotnet" >> $GITHUB_PATH
+        echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+    - name: Cache NuGet packages and build artifacts
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~/.dotnet/tools
+          **/bin
+          **/obj
+        key: ${{ runner.os }}-dotnet-complete-${{ hashFiles(format('{0}/**/*.csproj', inputs.solution_path), format('{0}/**/packages.lock.json', inputs.solution_path), format('{0}/**/*.props', inputs.solution_path), format('{0}/**/*.targets', inputs.solution_path)) }}
+        restore-keys: |
+          ${{ runner.os }}-dotnet-complete-
+          ${{ runner.os }}-dotnet-
+          ${{ runner.os }}-nuget-
+
+    - name: Configure GitHub Packages
+      run: |
+        # Remove existing github source if it exists
+        dotnet nuget remove source github || echo "No existing github source found"
+
+        # Add GitHub Packages source with authentication
+        dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/marcelpiva-org/index.json"
+
+        # List sources for debugging
+        echo "Configured NuGet sources:"
+        dotnet nuget list source
+
+    - name: Restore dependencies
+      run: |
+        SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -1)
+        if [ -n "$SOLUTION_FILE" ]; then
+          dotnet restore "$SOLUTION_FILE"
+        else
+          echo "No solution file found, restoring from project files"
+          find ${{ inputs.solution_path }} -name "*.csproj" -exec dotnet restore {} \;
+        fi
+
+    - name: Determine preliminary image tags
+      id: tags
+      env:
+        GITHUB_SHA: ${{ github.sha }}
+      run: |
+        # Set preliminary tags (will be updated after version-and-release if needed)
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          # Main branch - will be updated after semantic release
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "primary_tag=main-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "version_tag=main-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          # Develop branch
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop-${GITHUB_SHA:0:7},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop-latest" >> $GITHUB_OUTPUT
+          echo "primary_tag=develop-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "version_tag=develop-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+        else
+          # Other branches (PRs)
+          BRANCH_NAME=$(echo ${{ github.ref }} | sed 's|refs/heads/||' | sed 's|/|-|g')
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "primary_tag=${BRANCH_NAME}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          echo "version_tag=${BRANCH_NAME}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+        fi
+
+  # Update Tags after Version Release
+  update-tags:
+    name: Update Tags with Version
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies, version-and-release]
+    if: always() && needs.version-and-release.result == 'success' && needs.version-and-release.outputs.released == 'true'
+    outputs:
+      tags: ${{ steps.final-tags.outputs.tags }}
+      primary_tag: ${{ steps.final-tags.outputs.primary_tag }}
+      version_tag: ${{ steps.final-tags.outputs.version_tag }}
+
+    steps:
+    - name: Update tags with semantic version
+      id: final-tags
+      run: |
+        VERSION="${{ needs.version-and-release.outputs.version }}"
+        echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+        echo "primary_tag=${VERSION}" >> $GITHUB_OUTPUT
+        echo "version_tag=${VERSION}" >> $GITHUB_OUTPUT
+
+  # Build Job (Parallel)
+  build-solution:
+    name: Build Solution
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      run: |
+        mkdir -p $HOME/.dotnet
+        wget -O dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+        chmod +x dotnet-install.sh
+        ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+        echo "$HOME/.dotnet" >> $GITHUB_PATH
+        echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+    - name: Restore cached packages and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~/.dotnet/tools
+          **/bin
+          **/obj
+        key: ${{ runner.os }}-dotnet-complete-${{ hashFiles(format('{0}/**/*.csproj', inputs.solution_path), format('{0}/**/packages.lock.json', inputs.solution_path), format('{0}/**/*.props', inputs.solution_path), format('{0}/**/*.targets', inputs.solution_path)) }}
+        restore-keys: |
+          ${{ runner.os }}-dotnet-complete-
+          ${{ runner.os }}-dotnet-
+
+    - name: Configure GitHub Packages
+      run: |
+        dotnet nuget remove source github || echo "No existing github source found"
+        dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/marcelpiva-org/index.json"
+
+    - name: Build solution
+      run: |
+        SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -1)
+        if [ -n "$SOLUTION_FILE" ]; then
+          dotnet build "$SOLUTION_FILE" --configuration Release --no-restore
+        else
+          echo "No solution file found, building project files"
+          find ${{ inputs.solution_path }} -name "*.csproj" -exec dotnet build {} --configuration Release --no-restore \;
+        fi
+
+  # Test Job (Parallel)
+  run-tests:
+    name: Run Tests
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+    if: ${{ inputs.has_tests }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      run: |
+        mkdir -p $HOME/.dotnet
+        wget -O dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+        chmod +x dotnet-install.sh
+        ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+        echo "$HOME/.dotnet" >> $GITHUB_PATH
+        echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+    - name: Restore cached packages and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~/.dotnet/tools
+          **/bin
+          **/obj
+        key: ${{ runner.os }}-dotnet-complete-${{ hashFiles(format('{0}/**/*.csproj', inputs.solution_path), format('{0}/**/packages.lock.json', inputs.solution_path), format('{0}/**/*.props', inputs.solution_path), format('{0}/**/*.targets', inputs.solution_path)) }}
+        restore-keys: |
+          ${{ runner.os }}-dotnet-complete-
+          ${{ runner.os }}-dotnet-
+
+    - name: Configure GitHub Packages
+      run: |
+        dotnet nuget remove source github || echo "No existing github source found"
+        dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/marcelpiva-org/index.json"
+
+    - name: Build and run tests
+      run: |
+        SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" | head -1)
+        if [[ -n "$SOLUTION_FILE" && (-d "tests" || $(find . -name "*Test*.csproj" -o -name "*Tests.csproj" | wc -l) -gt 0) ]]; then
+          dotnet test "$SOLUTION_FILE" --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
+        else
+          echo "No test projects found, skipping tests"
+        fi
+
+  # Semantic Version and Release Job
+  version-and-release:
+    name: Version and Release
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [build-solution, run-tests]
+    if: ${{ inputs.enable_semantic_release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && always() && needs.build-solution.result == 'success' && (needs.run-tests.result == 'success' || needs.run-tests.result == 'skipped') }}
+    outputs:
+      version: ${{ steps.semantic.outputs.new_release_version }}
+      released: ${{ steps.semantic.outputs.new_release_published }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Semantic Release
+      id: semantic
+      uses: cycjimmy/semantic-release-action@v4
+      with:
+        semantic_version: 22
+        extra_plugins: |
+          @semantic-release/changelog@6
+          @semantic-release/git@10
+          conventional-changelog-conventionalcommits@7
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build Multi-Architecture Containers (Matrix Strategy)
+  build-containers:
+    name: Build ${{ matrix.arch }} Container
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies]
+    if: always() && needs.setup-dependencies.result == 'success'
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker-container
+        buildkitd-flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+        install: true
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push ${{ matrix.arch }} image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/${{ matrix.arch }}
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-${{ matrix.arch }}
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
+          GITHUB_TOKEN=${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        labels: |
+          org.opencontainers.image.title=MaestroAI ${{ inputs.service_name }} Service (${{ matrix.arch }})
+          org.opencontainers.image.description=${{ inputs.service_name }} microservice for MaestroAI platform
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.version=${{ needs.setup-dependencies.outputs.primary_tag }}
+        cache-from: |
+          type=gha,scope=buildkit-${{ matrix.arch }}-${{ github.ref_name }}-${{ inputs.service_name }}
+          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }}
+        cache-to: |
+          type=gha,mode=max,scope=buildkit-${{ matrix.arch }}-${{ github.ref_name }}-${{ inputs.service_name }}
+          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }},mode=max
+
+  # Create Multi-Architecture Manifest
+  create-manifest:
+    name: Create Multi-Arch Manifest
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [setup-dependencies, build-containers]
+    if: always() && needs.build-containers.result == 'success'
+
+    steps:
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create and push multi-arch manifest
+      run: |
+        # Create multi-architecture manifest using buildx imagetools
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64
+
+        # Create latest manifest if this is a release
+        if [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64
+        fi
+
+    - name: Output image info
+      run: |
+        echo "🐳 Multi-architecture container images built and pushed:"
+        echo "Tags: ${{ needs.setup-dependencies.outputs.tags }}"
+        echo "Primary tag: ${{ needs.setup-dependencies.outputs.primary_tag }}"
+        echo "AMD64: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64"
+        echo "ARM64: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64"
+        echo "Multi-arch: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}"
+
+  # Update Infrastructure Repository Job
+  update-infrastructure:
+    name: Update Infrastructure Repository
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [version-and-release, create-manifest]
+    if: ${{ inputs.update_infrastructure && github.ref == 'refs/heads/main' && needs.create-manifest.result == 'success' }}
+
+    steps:
+    - name: Checkout infrastructure repository
+      uses: actions/checkout@v4
+      with:
+        repository: marcelpiva-org/maestroai-infrastructure
+        token: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        path: infrastructure
+
+    - name: Update image tag in Kustomize
+      run: |
+        cd infrastructure
+        # Use version if available, otherwise use latest tag
+        if [[ "${{ needs.version-and-release.outputs.released }}" == "true" ]]; then
+          VERSION="${{ needs.version-and-release.outputs.version }}"
+        else
+          VERSION="latest"
+        fi
+        # Update development environment
+        DEPLOYMENT_FILE="kubernetes/argocd/base/${{ inputs.service_name }}-deployment.yaml"
+        if [ -f "$DEPLOYMENT_FILE" ]; then
+          sed -i "s|ghcr.io/marcelpiva-org/maestro-${{ inputs.service_name }}:.*|ghcr.io/marcelpiva-org/maestro-${{ inputs.service_name }}:${VERSION}|g" "$DEPLOYMENT_FILE"
+          echo "Updated $DEPLOYMENT_FILE with version: ${VERSION}"
+        else
+          echo "Deployment file $DEPLOYMENT_FILE not found, skipping update"
+        fi
+
+    - name: Commit and push changes
+      run: |
+        cd infrastructure
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "feat(${{ inputs.service_name }}): update container image to latest version
+
+          Updated ${{ inputs.service_name }} service container image with latest optimizations and features.
+
+          🤖 Generated with [Claude Code](https://claude.ai/code)
+
+          Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push
+        fi
+
+  # Trigger ArgoCD Sync Job
+  trigger-argocd-sync:
+    name: Trigger ArgoCD Sync
+    runs-on: [self-hosted, linux, arm64, maestroai]
+    needs: [update-infrastructure]
+    if: always() && needs.update-infrastructure.result == 'success'
+
+    steps:
+    - name: Trigger ArgoCD sync
+      run: |
+        echo "🔄 Infrastructure updated successfully"
+        echo "ArgoCD will automatically sync the changes within 3 minutes"
+        echo "Or manually sync via ArgoCD UI: http://localhost:8080/"
