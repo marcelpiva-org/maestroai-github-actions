@@ -37,6 +37,16 @@ on:
         required: false
         type: string
         default: 'ghcr.io'
+      build_amd64:
+        description: 'Build AMD64 architecture'
+        required: false
+        type: boolean
+        default: true
+      build_arm64:
+        description: 'Build ARM64 architecture'
+        required: false
+        type: boolean
+        default: true
 
 env:
   REGISTRY: ${{ inputs.registry }}
@@ -184,6 +194,13 @@ jobs:
     name: Build ${{ matrix.arch }} Container
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [setup-dependencies]
+    if: |
+      always() &&
+      needs.setup-dependencies.result == 'success' &&
+      (
+        (matrix.arch == 'amd64' && inputs.build_amd64 == true) ||
+        (matrix.arch == 'arm64' && inputs.build_arm64 == true)
+      )
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -207,6 +224,7 @@ jobs:
     name: Create Multi-Arch Manifest
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [setup-dependencies, build-containers]
+    if: always() && (inputs.build_amd64 == true || inputs.build_arm64 == true)
 
     steps:
     - name: Log in to Container Registry
@@ -218,18 +236,33 @@ jobs:
 
     - name: Create and push multi-arch manifest
       run: |
-        # Create multi-architecture manifest using buildx imagetools
-        docker buildx imagetools create \
-          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64 \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64
+        # Build list of available architecture images
+        IMAGES=""
+        if [[ "${{ inputs.build_amd64 }}" == "true" ]]; then
+          IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64"
+          echo "✅ AMD64 image available"
+        fi
+        if [[ "${{ inputs.build_arm64 }}" == "true" ]]; then
+          IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64"
+          echo "✅ ARM64 image available"
+        fi
 
-        # Create latest manifest if this is a release
-        if [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
+        # Create multi-architecture manifest with available images
+        if [[ -n "$IMAGES" ]]; then
+          echo "Creating manifest with images:$IMAGES"
           docker buildx imagetools create \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} \
+            $IMAGES
+
+          # Create latest manifest if this is a release
+          if [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
+            docker buildx imagetools create \
+              --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+              $IMAGES
+          fi
+        else
+          echo "❌ No architecture images available to create manifest"
+          exit 1
         fi
 
     - name: Output image info
