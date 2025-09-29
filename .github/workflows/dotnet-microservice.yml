@@ -61,7 +61,7 @@ jobs:
 
     - name: Setup .NET Environment
       id: setup
-      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      uses: ./actions/setup-dotnet
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
@@ -102,14 +102,14 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup .NET Environment
-      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      uses: ./actions/setup-dotnet
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
         packages_token: ${{ secrets.PACKAGES_TOKEN }}
 
     - name: Build Solution
-      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      uses: ./actions/build-dotnet
       with:
         solution_path: ${{ inputs.solution_path }}
 
@@ -125,14 +125,14 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup .NET Environment
-      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      uses: ./actions/setup-dotnet
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
         packages_token: ${{ secrets.PACKAGES_TOKEN }}
 
     - name: Run Tests
-      uses: marcelpiva-org/maestroai-github-actions/actions/test-dotnet@main
+      uses: ./actions/test-dotnet
       with:
         solution_path: ${{ inputs.solution_path }}
 
@@ -155,7 +155,7 @@ jobs:
 
     - name: Semantic Release
       id: semantic
-      uses: marcelpiva-org/maestroai-github-actions/actions/semantic-release@main
+      uses: ./actions/semantic-release
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -193,7 +193,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Build Docker Container
-      uses: marcelpiva-org/maestroai-github-actions/actions/docker-build@main
+      uses: ./actions/docker-build
       with:
         registry: ${{ env.REGISTRY }}
         image_name: ${{ env.IMAGE_NAME }}
@@ -250,7 +250,7 @@ jobs:
 
     steps:
     - name: Update Infrastructure
-      uses: marcelpiva-org/maestroai-github-actions/actions/update-infrastructure@main
+      uses: ./actions/update-infrastructure
       with:
         service_name: ${{ inputs.service_name }}
         version: ${{ needs.version-and-release.outputs.version || 'latest' }}
