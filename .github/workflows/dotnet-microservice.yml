@@ -536,8 +536,9 @@ jobs:
             --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} \
             $IMAGES
 
-          # Create latest manifest if this is a release
-          if [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
+          # Create latest manifest for main branch or when tags contain "latest"
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
+            echo "Creating :latest manifest"
             docker buildx imagetools create \
               --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
               $IMAGES
