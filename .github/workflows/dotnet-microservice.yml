@@ -561,7 +561,8 @@ jobs:
     name: Update Infrastructure Repository
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [version-and-release, create-manifest]
-    if: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
+    # Temporarily removed condition for debugging
+    # if: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
 
     steps:
     - name: Debug inputs
@@ -572,6 +573,7 @@ jobs:
         echo "Condition result: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}"
 
     - name: Update Infrastructure
+      if: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
       uses: marcelpiva-org/maestroai-github-actions/actions/update-infrastructure@main
       with:
         service_name: ${{ inputs.service_name }}
