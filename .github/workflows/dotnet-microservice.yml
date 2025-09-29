@@ -194,6 +194,127 @@ jobs:
         echo "primary_tag=${VERSION}" >> $GITHUB_OUTPUT
         echo "version_tag=${VERSION}" >> $GITHUB_OUTPUT
 
+  # Detect which architectures to build automatically
+  detect-build-architectures:
+    name: Detect Build Architectures
+    runs-on: ubuntu-latest
+    needs: [setup-dependencies, build-solution, run-tests]
+    outputs:
+      build_amd64: ${{ steps.detect.outputs.build_amd64 }}
+      build_arm64: ${{ steps.detect.outputs.build_arm64 }}
+      reason: ${{ steps.detect.outputs.reason }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Detect architectures to build
+      id: detect
+      run: |
+        BUILD_AMD64="true"
+        BUILD_ARM64="true"
+        REASON="Default: building all architectures"
+
+        # Get commit message
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+
+        # Check commit message for architecture tags
+        if echo "$COMMIT_MSG" | grep -qiE '^\[amd64\]|^amd64:'; then
+          BUILD_AMD64="true"
+          BUILD_ARM64="false"
+          REASON="Commit message contains [amd64] tag - building AMD64 only"
+        elif echo "$COMMIT_MSG" | grep -qiE '^\[arm64\]|^arm64:'; then
+          BUILD_AMD64="false"
+          BUILD_ARM64="true"
+          REASON="Commit message contains [arm64] tag - building ARM64 only"
+        elif echo "$COMMIT_MSG" | grep -qiE '^\[arch:all\]|^\[all-arch\]'; then
+          BUILD_AMD64="true"
+          BUILD_ARM64="true"
+          REASON="Commit message contains [arch:all] tag - building all architectures"
+        fi
+
+        # Check branch patterns
+        BRANCH_NAME="${{ github.ref_name }}"
+        if [[ "$BRANCH_NAME" =~ ^(hotfix|patch)/ ]]; then
+          BUILD_AMD64="true"
+          BUILD_ARM64="false"
+          REASON="Hotfix/Patch branch detected - building AMD64 only for faster deployment"
+        elif [[ "$BRANCH_NAME" =~ ^(release|main|master)$ ]]; then
+          BUILD_AMD64="true"
+          BUILD_ARM64="true"
+          REASON="Production branch detected - building all architectures"
+        fi
+
+        # Check for documentation-only changes
+        DOC_ONLY=$(git diff --name-only HEAD~1 HEAD | grep -vE '\.(md|txt|rst)$|^docs/|^README' | wc -l)
+        if [ "$DOC_ONLY" -eq 0 ]; then
+          BUILD_AMD64="false"
+          BUILD_ARM64="false"
+          REASON="Documentation-only changes - skipping container builds"
+        fi
+
+        # Check PR labels (if this is a PR)
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
+
+          if echo "$LABELS" | grep -q "build-amd64-only"; then
+            BUILD_AMD64="true"
+            BUILD_ARM64="false"
+            REASON="PR label 'build-amd64-only' detected"
+          elif echo "$LABELS" | grep -q "build-arm64-only"; then
+            BUILD_AMD64="false"
+            BUILD_ARM64="true"
+            REASON="PR label 'build-arm64-only' detected"
+          elif echo "$LABELS" | grep -q "build-all-arch"; then
+            BUILD_AMD64="true"
+            BUILD_ARM64="true"
+            REASON="PR label 'build-all-arch' detected"
+          elif echo "$LABELS" | grep -q "skip-build"; then
+            BUILD_AMD64="false"
+            BUILD_ARM64="false"
+            REASON="PR label 'skip-build' detected - skipping container builds"
+          fi
+        fi
+
+        # Override with workflow_dispatch inputs if provided
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [ "${{ inputs.build_amd64 }}" != "" ]; then
+            BUILD_AMD64="${{ inputs.build_amd64 }}"
+          fi
+          if [ "${{ inputs.build_arm64 }}" != "" ]; then
+            BUILD_ARM64="${{ inputs.build_arm64 }}"
+          fi
+          REASON="Manual workflow_dispatch with user-selected architectures"
+        fi
+
+        echo "build_amd64=$BUILD_AMD64" >> $GITHUB_OUTPUT
+        echo "build_arm64=$BUILD_ARM64" >> $GITHUB_OUTPUT
+        echo "reason=$REASON" >> $GITHUB_OUTPUT
+
+        echo "🏗️ Architecture Detection Result:"
+        echo "  AMD64: $BUILD_AMD64"
+        echo "  ARM64: $BUILD_ARM64"
+        echo "  Reason: $REASON"
+
+    - name: Create detection summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🏗️ Build Architecture Detection
+
+        **Decision**:
+        - AMD64: ${{ steps.detect.outputs.build_amd64 == 'true' && '✅ Build' || '⏭️ Skip' }}
+        - ARM64: ${{ steps.detect.outputs.build_arm64 == 'true' && '✅ Build' || '⏭️ Skip' }}
+
+        **Reason**: ${{ steps.detect.outputs.reason }}
+
+        **Context**:
+        - Event: \`${{ github.event_name }}\`
+        - Branch: \`${{ github.ref_name }}\`
+        - Commit: \`${{ github.sha }}\`
+        EOF
+
   # Manual Approval for Container Builds
   request-build-approval:
     name: Request Build Approval
@@ -330,11 +451,11 @@ jobs:
   build-amd64:
     name: Build AMD64 Container
     runs-on: [self-hosted, linux, arm64, maestroai]
-    needs: [setup-dependencies, request-build-approval]
+    needs: [setup-dependencies, detect-build-architectures, request-build-approval]
     if: |
       always() &&
       (
-        (inputs.require_manual_approval == false && inputs.build_amd64 == true) ||
+        (inputs.require_manual_approval == false && needs.detect-build-architectures.outputs.build_amd64 == 'true') ||
         (inputs.require_manual_approval == true && needs.request-build-approval.outputs.approved_amd64 == 'true')
       )
 
@@ -356,11 +477,11 @@ jobs:
   build-arm64:
     name: Build ARM64 Container
     runs-on: [self-hosted, linux, arm64, maestroai]
-    needs: [setup-dependencies, request-build-approval]
+    needs: [setup-dependencies, detect-build-architectures, request-build-approval]
     if: |
       always() &&
       (
-        (inputs.require_manual_approval == false && inputs.build_arm64 == true) ||
+        (inputs.require_manual_approval == false && needs.detect-build-architectures.outputs.build_arm64 == 'true') ||
         (inputs.require_manual_approval == true && needs.request-build-approval.outputs.approved_arm64 == 'true')
       )
 
