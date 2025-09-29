@@ -561,9 +561,14 @@ jobs:
     name: Update Infrastructure Repository
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [version-and-release, create-manifest]
-    if: ${{ inputs.update_infrastructure && needs.create-manifest.result == 'success' }}
+    if: ${{ inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
 
     steps:
+    - name: Debug inputs
+      run: |
+        echo "update_infrastructure input: ${{ inputs.update_infrastructure }}"
+        echo "create-manifest result: ${{ needs.create-manifest.result }}"
+
     - name: Update Infrastructure
       uses: marcelpiva-org/maestroai-github-actions/actions/update-infrastructure@main
       with:
