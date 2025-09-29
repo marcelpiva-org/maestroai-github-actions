@@ -472,6 +472,7 @@ jobs:
         architecture: amd64
         github_token: ${{ secrets.GITHUB_TOKEN }}
         packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        registry_username: marcelpiva-org
 
   # Build ARM64 Container
   build-arm64:
@@ -498,6 +499,7 @@ jobs:
         architecture: arm64
         github_token: ${{ secrets.GITHUB_TOKEN }}
         packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        registry_username: marcelpiva-org
 
   # Create Multi-Architecture Manifest
   create-manifest:

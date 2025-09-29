@@ -28,6 +28,9 @@ inputs:
   packages_token:
     description: 'Packages token for private NuGet'
     required: false
+  registry_username:
+    description: 'Registry username (defaults to github.actor)'
+    required: false
 outputs:
   image:
     description: 'Built image reference'
@@ -46,7 +49,7 @@ runs:
       uses: docker/login-action@v3
       with:
         registry: ${{ inputs.registry }}
-        username: ${{ github.actor }}
+        username: ${{ inputs.registry_username || github.actor }}
         password: ${{ inputs.github_token }}
 
     - name: Build and push container
