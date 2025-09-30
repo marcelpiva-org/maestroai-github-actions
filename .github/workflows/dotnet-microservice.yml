@@ -53,6 +53,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ${{ inputs.registry }}
   IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}-app

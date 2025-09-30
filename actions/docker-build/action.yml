@@ -62,7 +62,8 @@ runs:
         tags: ${{ inputs.registry }}/${{ inputs.image_name }}:${{ inputs.tag }}-${{ inputs.architecture }}
         build-args: |
           BUILDKIT_INLINE_CACHE=1
-          GITHUB_TOKEN=${{ inputs.packages_token }}
+        secrets: |
+          github_token=${{ inputs.packages_token }}
         labels: |
           org.opencontainers.image.title=${{ inputs.image_name }} (${{ inputs.architecture }})
           org.opencontainers.image.description=MaestroAI microservice container
