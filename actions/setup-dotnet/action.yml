@@ -22,13 +22,21 @@ runs:
     - name: Setup .NET
       shell: bash
       run: |
-        # Install .NET in user directory
-        mkdir -p $HOME/.dotnet
-        wget -O dotnet-install.sh https://dot.net/v1/dotnet-install.sh
-        chmod +x dotnet-install.sh
-        ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
-        echo "$HOME/.dotnet" >> $GITHUB_PATH
-        echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+        # Check if dotnet is already installed
+        if command -v dotnet &> /dev/null; then
+          echo "✓ .NET SDK already installed: $(dotnet --version)"
+          echo "DOTNET_ROOT=$(dirname $(dirname $(command -v dotnet)))" >> $GITHUB_ENV
+        else
+          echo "⚠ .NET SDK not found, installing..."
+          # Install .NET in user directory
+          mkdir -p $HOME/.dotnet
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+          echo "✓ .NET SDK installed: $($HOME/.dotnet/dotnet --version)"
+        fi
 
     - name: Cache NuGet packages and build artifacts
       id: cache
