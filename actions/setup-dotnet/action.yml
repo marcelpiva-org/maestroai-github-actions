@@ -73,18 +73,37 @@ runs:
         # Find solution file
         SOLUTION_FILE=$(find ${{ inputs.solution_path }} -name "*.sln" 2>/dev/null | head -n 1)
 
-        if [ -n "$SOLUTION_FILE" ]; then
-          echo "Found solution: $SOLUTION_FILE"
-          dotnet restore "$SOLUTION_FILE"
-        else
+        if [ -z "$SOLUTION_FILE" ]; then
           echo "No solution file found in ${{ inputs.solution_path }}, trying current directory"
           SOLUTION_FILE=$(find . -name "*.sln" 2>/dev/null | head -n 1)
-
-          if [ -n "$SOLUTION_FILE" ]; then
-            echo "Found solution: $SOLUTION_FILE"
-            dotnet restore "$SOLUTION_FILE"
-          else
-            echo "No solution file found, restoring all projects"
-            dotnet restore
-          fi
         fi
+
+        if [ -z "$SOLUTION_FILE" ]; then
+          echo "⚠ No solution file found, restoring all projects"
+          TARGET="."
+        else
+          echo "✓ Found solution: $SOLUTION_FILE"
+          TARGET="$SOLUTION_FILE"
+        fi
+
+        # Retry logic for GitHub Packages instability
+        MAX_RETRIES=3
+        RETRY_DELAY=10
+
+        for i in $(seq 1 $MAX_RETRIES); do
+          echo "🔄 Restore attempt $i/$MAX_RETRIES..."
+
+          if dotnet restore "$TARGET" --disable-parallel --force; then
+            echo "✅ Restore successful!"
+            exit 0
+          else
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "⚠ Restore failed, retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+              RETRY_DELAY=$((RETRY_DELAY * 2))  # Exponential backoff
+            else
+              echo "❌ Restore failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+          fi
+        done
