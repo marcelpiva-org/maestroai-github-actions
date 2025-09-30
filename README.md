@@ -173,7 +173,10 @@ graph TD
 
 ## 🔧 Prerequisites
 
-- **Runners**: Self-hosted GitHub runners with labels `[self-hosted, linux, arm64, maestroai]`
+- **Runners**: Actions Runner Controller (ARC) with autoscaling (min: 3, max: 8)
+  - Namespace: `arc-system`
+  - Labels: `[self-hosted, linux, arm64, maestroai]`
+  - Controller: `actions-runner-controller`
 - **Docker**: BuildKit support for multi-arch builds
 - **Registry**: Access to GitHub Container Registry (GHCR)
 - **Infrastructure**: `marcelpiva-org/maestroai-infrastructure` repository
@@ -189,9 +192,10 @@ graph TD
 ## 📦 Generated Artifacts
 
 ### Container Images
-- **Registry**: `ghcr.io/marcelpiva-org/maestro-{service_name}`
+- **Registry**: `ghcr.io/marcelpiva-org/maestro-{service_name}-app`
 - **Tags**: `latest`, semantic versions, branch tags
 - **Architectures**: `linux/amd64`, `linux/arm64`
+- **Naming Convention**: Microservices use `-app` suffix to avoid conflicts with library packages
 
 ### NuGet Packages
 - **Registry**: GitHub Packages (`https://nuget.pkg.github.com/marcelpiva-org/index.json`)
