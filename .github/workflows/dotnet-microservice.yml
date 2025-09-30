@@ -61,7 +61,7 @@ jobs:
   # Setup Dependencies and Determine Tags
   setup-dependencies:
     name: Setup Dependencies & Tags
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     outputs:
       cache-hit: ${{ steps.setup.outputs.cache-hit }}
       tags: ${{ steps.tags.outputs.tags }}
@@ -109,7 +109,7 @@ jobs:
   # Build Job (Parallel)
   build-solution:
     name: Build Solution
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies]
 
     steps:
@@ -131,7 +131,7 @@ jobs:
   # Test Job (Parallel)
   run-tests:
     name: Run Tests
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies]
     if: ${{ inputs.has_tests }}
 
@@ -154,7 +154,7 @@ jobs:
   # Semantic Version and Release Job
   version-and-release:
     name: Version and Release
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [build-solution, run-tests]
     if: ${{ inputs.enable_semantic_release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
     outputs:
@@ -177,7 +177,7 @@ jobs:
   # Update Tags after Version Release
   update-tags:
     name: Update Tags with Version
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies, version-and-release]
     if: always() && needs.version-and-release.result == 'success' && needs.version-and-release.outputs.released == 'true'
     outputs:
@@ -450,7 +450,7 @@ jobs:
   # Build AMD64 Container
   build-amd64:
     name: Build AMD64 Container
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies, detect-build-architectures, request-build-approval]
     if: |
       always() &&
@@ -477,7 +477,7 @@ jobs:
   # Build ARM64 Container
   build-arm64:
     name: Build ARM64 Container
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies, detect-build-architectures, request-build-approval]
     if: |
       always() &&
@@ -504,7 +504,7 @@ jobs:
   # Create Multi-Architecture Manifest
   create-manifest:
     name: Create Multi-Arch Manifest
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [setup-dependencies, build-amd64, build-arm64]
     if: always() && (needs.build-amd64.result == 'success' || needs.build-arm64.result == 'success')
 
@@ -556,7 +556,7 @@ jobs:
   # Update Infrastructure Repository Job
   update-infrastructure:
     name: Update Infrastructure Repository
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [create-manifest]
     if: ${{ always() && inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
 
@@ -571,7 +571,7 @@ jobs:
   # Trigger ArgoCD Sync (Optional)
   trigger-argocd-sync:
     name: Trigger ArgoCD Sync
-    runs-on: [self-hosted, linux, arm64, maestroai]
+    runs-on: [self-hosted, linux, arm64]
     needs: [update-infrastructure]
     if: ${{ always() && needs.update-infrastructure.result == 'success' }}
 
