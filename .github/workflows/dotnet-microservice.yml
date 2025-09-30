@@ -573,7 +573,7 @@ jobs:
     name: Trigger ArgoCD Sync
     runs-on: [self-hosted, linux, arm64, maestroai]
     needs: [update-infrastructure]
-    if: needs.update-infrastructure.result == 'success'
+    if: ${{ always() && needs.update-infrastructure.result == 'success' }}
 
     steps:
     - name: Trigger ArgoCD Application Sync
