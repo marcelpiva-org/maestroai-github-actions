@@ -11,6 +11,364 @@ This repository provides a complete **modular CI/CD system** built with:
 - **⚡ Local References**: Fast execution with `./actions/` imports
 - **🎯 Zero Configuration**: Works out-of-the-box for most .NET projects
 
+## 📋 Table of Contents
+
+- [Development Workflow & Release Cycle](#-development-workflow--release-cycle)
+- [Complete CI/CD Pipeline Flow](#-complete-cicd-pipeline-flow)
+- [Composite Actions](#-composite-actions)
+- [Reusable Workflows](#-reusable-workflows)
+- [Architecture](#-architecture)
+- [Supported Projects](#-supported-projects)
+- [Prerequisites](#-prerequisites)
+- [Getting Started](#-getting-started)
+
+## 🔄 Development Workflow & Release Cycle
+
+### Overview
+
+The MaestroAI platform uses a **GitOps-based continuous deployment** workflow with automated versioning, multi-architecture container builds, and ArgoCD-managed deployments.
+
+### Branch Strategy
+
+| Branch | Purpose | Triggers | Deployment Target |
+|--------|---------|----------|-------------------|
+| `main` | Production releases | Semantic versioning + release creation | Production (latest tag) |
+| `develop` | Integration/staging | Build + deploy with develop-latest tag | Staging environment |
+| `feature/*` | New features | Build only (no deploy) | N/A |
+| `fix/*` | Bug fixes | Build only (no deploy) | N/A |
+| `hotfix/*` | Production hotfixes | Fast AMD64-only build | Production (expedited) |
+
+### Complete Release Cycle
+
+```mermaid
+graph TB
+    A[Developer Commits] --> B{Branch?}
+    B -->|main| C[Run CI/CD Pipeline]
+    B -->|develop| D[Run CI/CD Pipeline]
+    B -->|feature/*| E[Build & Test Only]
+    B -->|fix/*| E
+
+    C --> F[Setup Dependencies]
+    D --> F
+
+    F --> G[Parallel: Build Solution]
+    F --> H[Parallel: Run Tests]
+    F --> I[Determine Tags]
+
+    G --> J{main branch?}
+    H --> J
+
+    J -->|Yes| K[Semantic Release]
+    J -->|No| L[Use Branch Tags]
+
+    K --> M[Create Git Tag]
+    K --> N[Create GitHub Release]
+    K --> O[Update Version]
+
+    M --> P[Build Containers]
+    N --> P
+    O --> P
+    L --> P
+
+    P --> Q[Parallel: Build AMD64]
+    P --> R[Parallel: Build ARM64]
+
+    Q --> S[Create Multi-Arch Manifest]
+    R --> S
+
+    S --> T[Push to GHCR]
+    T --> U[Update Infrastructure Repo]
+
+    U --> V[Update Kustomize Manifests]
+    V --> W[Git Commit + Push]
+
+    W --> X[ArgoCD Detects Change]
+    X --> Y[ArgoCD Syncs Application]
+
+    Y --> Z[Deploy to Kubernetes]
+    Z --> AA[Pod Running]
+    AA --> AB[Health Check via Traefik]
+
+    style K fill:#4CAF50
+    style T fill:#2196F3
+    style Y fill:#FF9800
+    style AB fill:#9C27B0
+```
+
+### Detailed Pipeline Stages
+
+#### Stage 1: Code Commit & Trigger
+```bash
+# Developer commits with conventional commit message
+git commit -m "feat(react): add new user dashboard"
+git push origin main
+```
+
+**Conventional Commit Types:**
+- `feat:` New feature (triggers MINOR version bump)
+- `fix:` Bug fix (triggers PATCH version bump)
+- `BREAKING CHANGE:` Breaking change (triggers MAJOR version bump)
+- `chore:` Maintenance (no version bump)
+- `docs:` Documentation only (no version bump)
+
+#### Stage 2: CI/CD Pipeline Execution
+
+1. **Setup Dependencies** (30s)
+   - Checkout code with full history
+   - Setup .NET 8.0 SDK
+   - Configure NuGet sources (GitHub Packages)
+   - Restore dependencies with cache
+   - Determine preliminary tags
+
+2. **Build Solution** (Parallel, ~45s)
+   - Build in Release configuration
+   - Generate build artifacts
+   - Cache build outputs
+
+3. **Run Tests** (Parallel, ~60s)
+   - Execute unit tests
+   - Generate code coverage reports
+   - Upload test results
+
+4. **Semantic Versioning & Release** (main branch only, ~30s)
+   - Analyze commit messages since last release
+   - Calculate next semantic version (e.g., `1.2.3`)
+   - Create Git tag
+   - Generate GitHub Release with changelog
+   - Update version in manifests
+
+5. **Architecture Detection** (~10s)
+   - Analyze commit message for architecture tags
+   - Check branch patterns (hotfix = AMD64 only)
+   - Detect documentation-only changes (skip builds)
+   - Check PR labels for build instructions
+   - Default: build both AMD64 and ARM64
+
+6. **Build Containers** (Parallel, ~3-4 minutes)
+
+   **AMD64 Build:**
+   ```bash
+   docker buildx build \
+     --platform linux/amd64 \
+     --tag ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-amd64 \
+     --push
+   ```
+
+   **ARM64 Build:**
+   ```bash
+   docker buildx build \
+     --platform linux/arm64 \
+     --tag ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-arm64 \
+     --push
+   ```
+
+7. **Create Multi-Arch Manifest** (~20s)
+   ```bash
+   docker buildx imagetools create \
+     --tag ghcr.io/marcelpiva-org/maestro-react-app:1.2.3 \
+     ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-amd64 \
+     ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-arm64
+
+   docker buildx imagetools create \
+     --tag ghcr.io/marcelpiva-org/maestro-react-app:latest \
+     ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-amd64 \
+     ghcr.io/marcelpiva-org/maestro-react-app:1.2.3-arm64
+   ```
+
+8. **Update Infrastructure Repository** (~30s)
+   ```bash
+   # Clone infrastructure repository
+   git clone https://github.com/marcelpiva-org/maestroai-infrastructure
+
+   # Update deployment manifest
+   sed -i "s|image: ghcr.io/marcelpiva-org/maestro-react-app:.*|image: ghcr.io/marcelpiva-org/maestro-react-app:1.2.3|" \
+     kubernetes/argocd/base/react-deployment.yaml
+
+   # Commit and push
+   git commit -m "chore(react): update image tag to v1.2.3"
+   git push
+   ```
+
+#### Stage 3: GitOps Deployment
+
+9. **ArgoCD Sync** (Auto, within 3 minutes)
+   - ArgoCD polls infrastructure repository
+   - Detects change in `react-deployment.yaml`
+   - Compares desired state vs current state
+   - Triggers synchronization
+
+10. **Kubernetes Deployment** (~30-60s)
+    ```bash
+    # ArgoCD applies new manifest
+    kubectl apply -f kubernetes/argocd/base/react-deployment.yaml
+
+    # Kubernetes creates new ReplicaSet
+    # Rolling update: new pod starts, old pod terminates
+    ```
+
+11. **Pod Startup & Health Checks**
+    ```yaml
+    # Pod lifecycle
+    - ImagePull: Pull ghcr.io/marcelpiva-org/maestro-react-app:1.2.3
+    - ContainerCreating: Initialize container
+    - Running: Start application
+    - ReadinessProbe: HTTP GET /health (every 10s)
+    - LivenessProbe: HTTP GET /health (every 30s)
+    ```
+
+12. **Service Mesh & Ingress** (Immediate)
+    ```
+    External Request
+    ↓
+    Traefik Ingress (traefik.local)
+    ↓
+    Gateway Service (maestroai-gateway:80)
+    ↓
+    React Service (maestroai-react:80)
+    ↓
+    React Pod (container:8080)
+    ↓
+    Response from /health endpoint
+    ```
+
+### Image Tagging Strategy
+
+| Branch | Tags Created | Example |
+|--------|--------------|---------|
+| `main` (semantic) | `{version}`, `latest` | `1.2.3`, `latest` |
+| `main` (no semantic) | `main-{sha}` | `main-abc1234` |
+| `develop` | `develop-{sha}`, `develop-latest` | `develop-def5678`, `develop-latest` |
+| `feature/xyz` | `feature-xyz-{sha}` | `feature-xyz-ghi9012` |
+
+### Registry Organization
+
+**GitHub Container Registry (GHCR)**
+```
+ghcr.io/marcelpiva-org/
+├── maestro-react-app:latest
+├── maestro-react-app:1.2.3
+├── maestro-react-app:1.2.3-amd64
+├── maestro-react-app:1.2.3-arm64
+├── maestro-gateway-app:latest
+├── maestro-knowledge-app:latest
+└── ...
+```
+
+**Naming Convention:**
+- Microservices: `maestro-{service}-app` (suffix `-app` to avoid NuGet conflicts)
+- Libraries: `maestroai-{library}` (NuGet packages in GitHub Packages)
+
+### ArgoCD Application Structure
+
+```
+maestroai-infrastructure/
+├── kubernetes/argocd/
+│   ├── applications/
+│   │   └── maestroai-local.yaml          # ArgoCD Application definition
+│   ├── base/                             # Base Kubernetes manifests
+│   │   ├── namespace.yaml
+│   │   ├── react-deployment.yaml         # Deployment + Service
+│   │   ├── gateway-deployment.yaml
+│   │   ├── knowledge-deployment.yaml
+│   │   └── kustomization.yaml
+│   └── environments/
+│       └── local/
+│           └── kustomization.yaml        # Environment-specific overlays
+```
+
+### Version Artifact Locations
+
+| Artifact | Location | Example |
+|----------|----------|---------|
+| Git Tag | GitHub Repository Tags | `v1.2.3` |
+| GitHub Release | GitHub Releases | `v1.2.3` with changelog |
+| Container Image | GHCR | `ghcr.io/marcelpiva-org/maestro-react-app:1.2.3` |
+| Deployment Manifest | Infrastructure Repo | `kubernetes/argocd/base/react-deployment.yaml` |
+| Running Pod | Kubernetes Cluster | `maestroai-react-7d4f8b9c-xk2lm` |
+
+### Health Check Verification
+
+```bash
+# Internal health check (from within cluster)
+kubectl exec -it maestroai-react-xxx -- curl http://localhost:8080/health
+
+# Service health check
+kubectl run -it --rm debug --image=curlimages/curl -- curl http://maestroai-react/health
+
+# Ingress health check (external)
+curl http://traefik.local/api/react/health
+```
+
+### Monitoring Deployment Status
+
+```bash
+# Watch ArgoCD application status
+kubectl get application maestroai-local -n argocd -w
+
+# Watch pod rollout
+kubectl rollout status deployment/maestroai-react -n maestroai
+
+# Check pod logs
+kubectl logs -f deployment/maestroai-react -n maestroai
+
+# Verify image version
+kubectl get pod -n maestroai -o jsonpath='{.items[0].spec.containers[0].image}'
+```
+
+### Rollback Procedures
+
+**Automatic Rollback (Failed Health Checks):**
+```bash
+# Kubernetes automatically rolls back if new pods fail readiness/liveness probes
+kubectl rollout undo deployment/maestroai-react -n maestroai
+```
+
+**Manual Rollback (ArgoCD):**
+```bash
+# Revert to previous version in infrastructure repo
+cd maestroai-infrastructure
+git revert HEAD
+git push
+
+# Or use ArgoCD rollback
+argocd app rollback maestroai-local --server argocd-server -n argocd
+```
+
+**Manual Rollback (Kubernetes):**
+```bash
+# Rollback to previous revision
+kubectl rollout undo deployment/maestroai-react -n maestroai
+
+# Rollback to specific revision
+kubectl rollout undo deployment/maestroai-react --to-revision=2 -n maestroai
+```
+
+### Typical Timeline
+
+| Stage | Duration | Cumulative |
+|-------|----------|------------|
+| Code Push → Pipeline Start | ~5s | 5s |
+| Setup Dependencies | ~30s | 35s |
+| Build + Test (parallel) | ~60s | 95s |
+| Semantic Release | ~30s | 125s |
+| Container Builds (parallel) | ~4min | ~5min |
+| Multi-Arch Manifest | ~20s | ~5.5min |
+| Update Infrastructure | ~30s | ~6min |
+| ArgoCD Detection | ~3min | ~9min |
+| Kubernetes Deployment | ~60s | ~10min |
+| Pod Ready + Health Checks | ~30s | ~10.5min |
+| **Total: Commit → Production** | | **~10-11 minutes** |
+
+### Performance Optimizations in Use
+
+- ✅ Parallel job execution (build, test, multi-arch containers)
+- ✅ NuGet package caching (95%+ hit rate)
+- ✅ Docker layer caching (BuildKit)
+- ✅ Self-hosted ARM64 runners (native builds)
+- ✅ GitHub Actions Runner Controller (ARC) autoscaling
+- ✅ Kubernetes readiness gates for zero-downtime deployments
+- ✅ ArgoCD automated sync (3-minute polling interval)
+
 ## 📦 Composite Actions
 
 ### Core Actions
