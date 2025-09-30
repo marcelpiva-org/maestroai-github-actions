@@ -514,7 +514,7 @@ jobs:
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        password: ${{ secrets.PACKAGES_TOKEN }}
 
     - name: Create and push multi-arch manifest
       run: |
