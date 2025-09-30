@@ -532,16 +532,12 @@ jobs:
         # Create multi-architecture manifest with available images
         if [[ -n "$IMAGES" ]]; then
           echo "Creating manifest with images:$IMAGES"
-          docker buildx imagetools create \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} \
-            $IMAGES
+          docker buildx imagetools create --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }} $IMAGES
 
           # Create latest manifest for main branch or when tags contain "latest"
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ needs.setup-dependencies.outputs.tags }}" == *"latest"* ]]; then
             echo "Creating :latest manifest"
-            docker buildx imagetools create \
-              -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-              $IMAGES
+            docker buildx imagetools create --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest $IMAGES
           fi
         else
           echo "❌ No architecture images available to create manifest"
