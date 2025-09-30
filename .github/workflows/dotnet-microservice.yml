@@ -55,7 +55,7 @@ on:
 
 env:
   REGISTRY: ${{ inputs.registry }}
-  IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}
+  IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}-app
 
 jobs:
   # Setup Dependencies and Determine Tags

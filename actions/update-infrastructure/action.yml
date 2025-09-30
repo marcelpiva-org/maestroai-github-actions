@@ -42,7 +42,7 @@ runs:
 
         if [ -f "$DEPLOYMENT_FILE" ]; then
           echo "Updating $DEPLOYMENT_FILE"
-          sed -i "s|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}:.*|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}:${{ inputs.version }}|g" "$DEPLOYMENT_FILE"
+          sed -i "s|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}-app:.*|${{ inputs.registry }}/${{ inputs.image_org }}/maestro-${{ inputs.service_name }}-app:${{ inputs.version }}|g" "$DEPLOYMENT_FILE"
           echo "Updated image tags to version: ${{ inputs.version }}"
         else
           echo "Deployment file not found: $DEPLOYMENT_FILE"
