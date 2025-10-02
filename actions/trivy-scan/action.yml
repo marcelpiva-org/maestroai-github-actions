@@ -74,6 +74,7 @@ runs:
         echo "🔍 Scanning image: ${{ inputs.image }}"
 
         # Run Trivy scan with credentials via env vars
+        # Note: Multi-arch manifests require platform specification
         trivy image \
           --format ${{ inputs.format }} \
           --output ${{ inputs.output_file }} \
@@ -81,6 +82,7 @@ runs:
           --exit-code ${{ inputs.exit_code }} \
           --vuln-type os,library \
           --scanners vuln,secret,config \
+          --platform linux/amd64 \
           --timeout 10m \
           ${{ inputs.image }}
 
