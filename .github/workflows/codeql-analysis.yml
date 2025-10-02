@@ -20,11 +20,11 @@ name: CodeQL Security Analysis
 on:
   workflow_call:
     inputs:
-      languages:
-        description: 'Programming languages to analyze (comma-separated)'
+      language:
+        description: 'Programming language to analyze (csharp, javascript, etc)'
         required: false
         type: string
-        default: 'csharp,javascript'
+        default: 'csharp'
       queries:
         description: 'CodeQL query suite to use'
         required: false
@@ -38,15 +38,9 @@ permissions:
 
 jobs:
   analyze:
-    name: CodeQL Analysis
+    name: CodeQL Analysis (${{ inputs.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    strategy:
-      fail-fast: false
-      matrix:
-        # Convert comma-separated languages into array
-        language: ${{ fromJSON(format('["{0}"]', replace(inputs.languages, ',', '","'))) }}
 
     steps:
     - name: Checkout repository
@@ -55,19 +49,19 @@ jobs:
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
-        languages: ${{ matrix.language }}
+        languages: ${{ inputs.language }}
         queries: ${{ inputs.queries }}
         # Custom queries can be added here
         # queries: +security-and-quality,security-extended
 
     - name: Setup .NET (for C# analysis)
-      if: matrix.language == 'csharp'
+      if: inputs.language == 'csharp'
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
     - name: Restore dependencies (C#)
-      if: matrix.language == 'csharp'
+      if: inputs.language == 'csharp'
       run: |
         if [ -f "*.sln" ]; then
           dotnet restore *.sln
@@ -76,7 +70,7 @@ jobs:
         fi
 
     - name: Build solution (C#)
-      if: matrix.language == 'csharp'
+      if: inputs.language == 'csharp'
       run: |
         if [ -f "*.sln" ]; then
           dotnet build *.sln --no-restore --configuration Release
@@ -87,14 +81,14 @@ jobs:
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
       with:
-        category: "/language:${{ matrix.language }}"
+        category: "/language:${{ inputs.language }}"
         upload: true
 
     - name: Display results summary
       if: always()
       run: |
         echo "🔍 CodeQL Analysis Completed"
-        echo "Language: ${{ matrix.language }}"
+        echo "Language: ${{ inputs.language }}"
         echo "Queries: ${{ inputs.queries }}"
         echo ""
         echo "📊 Results uploaded to GitHub Security tab"

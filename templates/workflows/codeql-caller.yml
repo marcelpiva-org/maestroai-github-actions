@@ -10,13 +10,24 @@ on:
     - cron: '0 6 * * 1'
 
 jobs:
-  analyze:
-    name: CodeQL Security Analysis
+  analyze-csharp:
+    name: CodeQL Analysis (C#)
     uses: marcelpiva-org/maestroai-github-actions/.github/workflows/codeql-analysis.yml@main
     permissions:
       contents: read
       security-events: write
       actions: read
     with:
-      languages: 'csharp,javascript'
+      language: 'csharp'
+      queries: 'security-and-quality'
+
+  analyze-javascript:
+    name: CodeQL Analysis (JavaScript)
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/codeql-analysis.yml@main
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      language: 'javascript'
       queries: 'security-and-quality'
