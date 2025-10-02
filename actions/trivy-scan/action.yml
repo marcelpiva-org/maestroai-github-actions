@@ -39,13 +39,17 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Login to Container Registry
+    - name: Login and Pull Image
       if: inputs.registry_username != '' && inputs.registry_password != ''
       shell: bash
       run: |
         echo "🔐 Authenticating to GHCR..."
         echo "${{ inputs.registry_password }}" | docker login ghcr.io -u "${{ inputs.registry_username }}" --password-stdin
         echo "✅ Docker login successful"
+
+        echo "📥 Pulling image for scan..."
+        docker pull ${{ inputs.image }}
+        echo "✅ Image pulled successfully"
 
     - name: Run Trivy vulnerability scanner
       id: scan
@@ -59,6 +63,7 @@ runs:
         vuln-type: 'os,library'
         scanners: 'vuln,secret,config'
         timeout: '10m'
+        input: ''
 
     - name: Display scan summary
       shell: bash
