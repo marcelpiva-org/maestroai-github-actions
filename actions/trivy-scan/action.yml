@@ -1,0 +1,74 @@
+name: 'Trivy Security Scan'
+description: 'Scan Docker images for vulnerabilities using Trivy'
+inputs:
+  image:
+    description: 'Container image to scan (registry/name:tag)'
+    required: true
+  severity:
+    description: 'Severity levels to report (CRITICAL,HIGH,MEDIUM,LOW)'
+    required: false
+    default: 'CRITICAL,HIGH'
+  exit_code:
+    description: 'Exit code when vulnerabilities are found (0 = non-blocking)'
+    required: false
+    default: '0'
+  format:
+    description: 'Output format (table, json, sarif)'
+    required: false
+    default: 'sarif'
+  output_file:
+    description: 'Output file path'
+    required: false
+    default: 'trivy-results.sarif'
+  upload_sarif:
+    description: 'Upload SARIF results to GitHub Security'
+    required: false
+    default: 'true'
+outputs:
+  vulnerabilities_found:
+    description: 'Number of vulnerabilities found'
+    value: ${{ steps.scan.outputs.vulnerabilities }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Trivy vulnerability scanner
+      id: scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ inputs.image }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output_file }}
+        severity: ${{ inputs.severity }}
+        exit-code: ${{ inputs.exit_code }}
+        vuln-type: 'os,library'
+        scanners: 'vuln,secret,config'
+        timeout: '10m'
+
+    - name: Display scan summary
+      shell: bash
+      run: |
+        echo "🔍 Trivy Scan Results"
+        echo "Image: ${{ inputs.image }}"
+        echo "Severity: ${{ inputs.severity }}"
+        echo "Format: ${{ inputs.format }}"
+
+        if [ "${{ inputs.format }}" = "table" ]; then
+          cat ${{ inputs.output_file }} || echo "No vulnerabilities table available"
+        else
+          echo "📄 Results saved to: ${{ inputs.output_file }}"
+        fi
+
+    - name: Upload Trivy results to GitHub Security
+      if: inputs.upload_sarif == 'true' && inputs.format == 'sarif'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.output_file }}
+        category: 'trivy-container-scan'
+
+    - name: Upload Trivy results as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: trivy-scan-results-${{ inputs.image }}
+        path: ${{ inputs.output_file }}
+        retention-days: 30

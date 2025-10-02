@@ -557,11 +557,43 @@ jobs:
         echo "ARM64: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64"
         echo "Multi-arch: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}"
 
+  # Trivy Security Scan
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: maestroai-runners
+    needs: [setup-dependencies, create-manifest]
+    if: always() && needs.create-manifest.result == 'success'
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy scan on multi-arch image
+      uses: marcelpiva-org/maestroai-github-actions/actions/trivy-scan@main
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        exit_code: '0'
+        format: 'sarif'
+        output_file: 'trivy-results.sarif'
+        upload_sarif: 'true'
+
+    - name: Run Trivy scan (table output for logs)
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'
+
   # Update Infrastructure Repository Job
   update-infrastructure:
     name: Update Infrastructure Repository
     runs-on: maestroai-runners
-    needs: [create-manifest]
+    needs: [create-manifest, trivy-scan]
     if: ${{ always() && inputs.update_infrastructure == true && needs.create-manifest.result == 'success' }}
 
     steps:
