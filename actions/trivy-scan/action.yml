@@ -39,6 +39,14 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Docker login for private registry
+      if: inputs.registry_username != '' && inputs.registry_password != ''
+      shell: bash
+      run: |
+        echo "🔐 Logging into container registry..."
+        echo "${{ inputs.registry_password }}" | docker login ghcr.io -u "${{ inputs.registry_username }}" --password-stdin
+        echo "✅ Docker login successful"
+
     - name: Run Trivy vulnerability scanner
       id: scan
       shell: bash
