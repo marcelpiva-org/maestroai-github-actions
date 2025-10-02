@@ -37,9 +37,37 @@ permissions:
   actions: read
 
 jobs:
+  check-tier:
+    name: Check GitHub Tier
+    runs-on: ubuntu-latest
+    outputs:
+      is-paid: ${{ steps.check.outputs.is_paid }}
+    steps:
+    - name: Check if repository has CodeQL enabled
+      id: check
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # CodeQL requires GitHub Advanced Security (GitHub Team, Enterprise Cloud, or Enterprise Server)
+        # Free tier private repos don't have access to CodeQL
+
+        # Try to check if Advanced Security is enabled
+        is_public=$(gh api "/repos/${{ github.repository }}" --jq '.private' | grep -q 'false' && echo "true" || echo "false")
+
+        if [ "$is_public" = "true" ]; then
+          echo "is_paid=true" >> $GITHUB_OUTPUT
+          echo "✅ Public repository - CodeQL available"
+        else
+          echo "is_paid=false" >> $GITHUB_OUTPUT
+          echo "⚠️  Private repository - CodeQL requires GitHub Advanced Security (paid tier)"
+          echo "Skipping CodeQL analysis to avoid quota/billing issues"
+        fi
+
   analyze:
     name: CodeQL Analysis (${{ inputs.language }})
     runs-on: ubuntu-latest
+    needs: check-tier
+    if: needs.check-tier.outputs.is-paid == 'true'
     timeout-minutes: 30
 
     steps:
