@@ -1,0 +1,100 @@
+name: CodeQL Security Analysis
+
+# Reusable workflow for CodeQL code scanning
+# Detects security vulnerabilities and coding errors in .NET code
+#
+# Usage in your repository's .github/workflows/codeql.yml:
+#
+# name: CodeQL
+# on:
+#   push:
+#     branches: [main, develop]
+#   pull_request:
+#     branches: [main, develop]
+#   schedule:
+#     - cron: '0 6 * * 1'  # Weekly on Mondays at 6 AM
+# jobs:
+#   analyze:
+#     uses: marcelpiva-org/maestroai-github-actions/.github/workflows/codeql-analysis.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: 'Programming languages to analyze (comma-separated)'
+        required: false
+        type: string
+        default: 'csharp,javascript'
+      queries:
+        description: 'CodeQL query suite to use'
+        required: false
+        type: string
+        default: 'security-and-quality'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(format('["{0}"]', inputs.languages)) }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        queries: ${{ inputs.queries }}
+        # Custom queries can be added here
+        # queries: +security-and-quality,security-extended
+
+    - name: Setup .NET (for C# analysis)
+      if: matrix.language == 'csharp'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore dependencies (C#)
+      if: matrix.language == 'csharp'
+      run: |
+        if [ -f "*.sln" ]; then
+          dotnet restore *.sln
+        else
+          find . -name "*.csproj" -exec dotnet restore {} \;
+        fi
+
+    - name: Build solution (C#)
+      if: matrix.language == 'csharp'
+      run: |
+        if [ -f "*.sln" ]; then
+          dotnet build *.sln --no-restore --configuration Release
+        else
+          find . -name "*.csproj" -exec dotnet build {} --no-restore --configuration Release \;
+        fi
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{ matrix.language }}"
+        upload: true
+
+    - name: Display results summary
+      if: always()
+      run: |
+        echo "🔍 CodeQL Analysis Completed"
+        echo "Language: ${{ matrix.language }}"
+        echo "Queries: ${{ inputs.queries }}"
+        echo ""
+        echo "📊 Results uploaded to GitHub Security tab"
+        echo "View at: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning"
