@@ -1,0 +1,89 @@
+name: Branch Protection Gate
+
+# Reusable workflow to enforce PR-only policy for protected branches
+# Workaround for private repos on GitHub free tier (no native branch protection)
+#
+# Usage in your repository's .github/workflows/branch-protection.yml:
+#
+# name: Branch Protection
+# on:
+#   push:
+#     branches: [main, develop]
+# jobs:
+#   protection:
+#     uses: marcelpiva-org/maestroai-github-actions/.github/workflows/branch-protection-gate.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      protected_branches:
+        description: 'Comma-separated list of protected branches'
+        required: false
+        type: string
+        default: 'main,develop'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  enforce-pr-only:
+    name: Enforce Pull Request Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if push is from PR merge
+        id: check_pr
+        run: |
+          echo "Commit message: ${{ github.event.head_commit.message }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Event name: ${{ github.event_name }}"
+
+          # Check if this is a PR merge commit
+          if [[ "${{ github.event.head_commit.message }}" == *"Merge pull request"* ]]; then
+            echo "✅ Push is from PR merge - allowed"
+            echo "is_pr_merge=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if this is from GitHub Actions automated commits
+          if [[ "${{ github.event.head_commit.author.username }}" == "github-actions[bot]" ]]; then
+            echo "✅ Push is from GitHub Actions - allowed"
+            echo "is_pr_merge=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if this is from Dependabot
+          if [[ "${{ github.event.head_commit.author.username }}" == "dependabot[bot]" ]]; then
+            echo "✅ Push is from Dependabot - allowed (will require PR approval)"
+            echo "is_pr_merge=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "is_pr_merge=false" >> $GITHUB_OUTPUT
+
+      - name: Block direct pushes
+        if: steps.check_pr.outputs.is_pr_merge != 'true'
+        run: |
+          echo "❌ ERROR: Direct pushes to ${{ github.ref_name }} are not allowed!"
+          echo ""
+          echo "📋 MaestroAI Git Flow Policy:"
+          echo "  - Protected branches: main, develop"
+          echo "  - All changes MUST go through Pull Requests"
+          echo "  - Minimum 1 approval required"
+          echo "  - Status checks must pass (build, test, trivy-scan)"
+          echo ""
+          echo "✅ How to fix:"
+          echo "  1. Revert this commit: git revert HEAD"
+          echo "  2. Create a feature branch: git checkout -b feature/your-feature"
+          echo "  3. Push your changes: git push origin feature/your-feature"
+          echo "  4. Open a Pull Request on GitHub"
+          echo ""
+          echo "📖 See: docs/GIT-FLOW.md for complete workflow"
+          exit 1
+
+      - name: Notify on success
+        if: steps.check_pr.outputs.is_pr_merge == 'true'
+        run: |
+          echo "✅ Pull Request workflow correctly followed"
+          echo "📝 Commit: ${{ github.event.head_commit.message }}"
+          echo "👤 Author: ${{ github.event.head_commit.author.name }}"
