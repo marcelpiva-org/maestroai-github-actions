@@ -39,31 +39,36 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Login and Pull Image
-      if: inputs.registry_username != '' && inputs.registry_password != ''
-      shell: bash
-      run: |
-        echo "🔐 Authenticating to GHCR..."
-        echo "${{ inputs.registry_password }}" | docker login ghcr.io -u "${{ inputs.registry_username }}" --password-stdin
-        echo "✅ Docker login successful"
-
-        echo "📥 Pulling image for scan..."
-        docker pull ${{ inputs.image }}
-        echo "✅ Image pulled successfully"
-
     - name: Run Trivy vulnerability scanner
       id: scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ inputs.image }}
-        format: ${{ inputs.format }}
-        output: ${{ inputs.output_file }}
-        severity: ${{ inputs.severity }}
-        exit-code: ${{ inputs.exit_code }}
-        vuln-type: 'os,library'
-        scanners: 'vuln,secret,config'
-        timeout: '10m'
-        input: ''
+      shell: bash
+      env:
+        TRIVY_USERNAME: ${{ inputs.registry_username }}
+        TRIVY_PASSWORD: ${{ inputs.registry_password }}
+      run: |
+        echo "🔐 Installing Trivy..."
+
+        # Install Trivy if not already installed
+        if ! command -v trivy &> /dev/null; then
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.1
+        fi
+
+        echo "✅ Trivy installed: $(trivy --version)"
+
+        echo "🔍 Scanning image: ${{ inputs.image }}"
+
+        # Run Trivy scan with credentials via env vars
+        trivy image \
+          --format ${{ inputs.format }} \
+          --output ${{ inputs.output_file }} \
+          --severity ${{ inputs.severity }} \
+          --exit-code ${{ inputs.exit_code }} \
+          --vuln-type os,library \
+          --scanners vuln,secret,config \
+          --timeout 10m \
+          ${{ inputs.image }}
+
+        echo "✅ Trivy scan completed"
 
     - name: Display scan summary
       shell: bash
