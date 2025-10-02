@@ -566,6 +566,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read  # Required for SARIF upload workflow metadata
       packages: read  # Required to pull images from GHCR for scanning
 
     steps:
