@@ -566,6 +566,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      packages: read  # Required to pull images from GHCR for scanning
 
     steps:
     - name: Checkout code
