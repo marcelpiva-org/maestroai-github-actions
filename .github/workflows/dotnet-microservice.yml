@@ -580,6 +580,8 @@ jobs:
         format: 'sarif'
         output_file: 'trivy-results.sarif'
         upload_sarif: 'true'
+        registry_username: ${{ github.actor }}
+        registry_password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Run Trivy scan (table output for logs)
       uses: aquasecurity/trivy-action@master
