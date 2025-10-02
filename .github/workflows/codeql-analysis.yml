@@ -45,7 +45,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ${{ fromJSON(format('["{0}"]', inputs.languages)) }}
+        # Convert comma-separated languages into array
+        language: ${{ fromJSON(format('["{0}"]', replace(inputs.languages, ',', '","'))) }}
 
     steps:
     - name: Checkout repository
