@@ -1,0 +1,25 @@
+name: CI/CD - Microservice
+
+# Calls the centralized reusable workflow for .NET microservices
+# See: marcelpiva-org/maestroai-github-actions
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build-and-deploy:
+    name: Build, Test & Deploy Microservice
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-microservice.yml@main
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
