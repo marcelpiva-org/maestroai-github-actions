@@ -39,41 +39,26 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install Trivy
+    - name: Login to Container Registry
+      if: inputs.registry_username != '' && inputs.registry_password != ''
       shell: bash
       run: |
-        # Check if trivy is already installed
-        if ! command -v trivy &> /dev/null; then
-          echo "📦 Installing Trivy..."
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.1
-          echo "✅ Trivy installed: $(trivy --version)"
-        else
-          echo "✅ Trivy already installed: $(trivy --version)"
-        fi
+        echo "🔐 Authenticating to GHCR..."
+        echo "${{ inputs.registry_password }}" | docker login ghcr.io -u "${{ inputs.registry_username }}" --password-stdin
+        echo "✅ Docker login successful"
 
     - name: Run Trivy vulnerability scanner
       id: scan
-      shell: bash
-      env:
-        TRIVY_USERNAME: ${{ inputs.registry_username }}
-        TRIVY_PASSWORD: ${{ inputs.registry_password }}
-      run: |
-        echo "🔐 Scanning image: ${{ inputs.image }}"
-        echo "📊 Severity: ${{ inputs.severity }}"
-        echo "📝 Format: ${{ inputs.format }}"
-
-        # Run Trivy with credentials via env vars
-        trivy image \
-          --format ${{ inputs.format }} \
-          --output ${{ inputs.output_file }} \
-          --severity ${{ inputs.severity }} \
-          --exit-code ${{ inputs.exit_code }} \
-          --vuln-type os,library \
-          --scanners vuln,secret,config \
-          --timeout 10m \
-          ${{ inputs.image }}
-
-        echo "✅ Scan completed"
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ inputs.image }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output_file }}
+        severity: ${{ inputs.severity }}
+        exit-code: ${{ inputs.exit_code }}
+        vuln-type: 'os,library'
+        scanners: 'vuln,secret,config'
+        timeout: '10m'
 
     - name: Display scan summary
       shell: bash
