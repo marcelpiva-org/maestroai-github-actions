@@ -557,11 +557,40 @@ jobs:
         echo "ARM64: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}-arm64"
         echo "Multi-arch: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-dependencies.outputs.version_tag }}"
 
+  # Check GitHub Tier for Security Features
+  check-security-tier:
+    name: Check GitHub Security Tier
+    runs-on: maestroai-runners
+    needs: [setup-dependencies, create-manifest]
+    if: always() && needs.create-manifest.result == 'success'
+    outputs:
+      has-advanced-security: ${{ steps.check.outputs.has_advanced_security }}
+    permissions:
+      contents: read
+
+    steps:
+    - name: Check if repository has Advanced Security
+      id: check
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Check if repository is public (free Advanced Security)
+        is_public=$(gh api "/repos/${{ github.repository }}" --jq '.private' | grep -q 'false' && echo "true" || echo "false")
+
+        if [ "$is_public" = "true" ]; then
+          echo "has_advanced_security=true" >> $GITHUB_OUTPUT
+          echo "✅ Public repository - Advanced Security available"
+        else
+          echo "has_advanced_security=false" >> $GITHUB_OUTPUT
+          echo "⚠️  Private repository - Advanced Security requires GitHub Team/Enterprise"
+          echo "ℹ️  Trivy scan will run but SARIF upload will be skipped"
+        fi
+
   # Trivy Security Scan
   trivy-scan:
     name: Trivy Security Scan
     runs-on: maestroai-runners
-    needs: [setup-dependencies, create-manifest]
+    needs: [setup-dependencies, create-manifest, check-security-tier]
     if: always() && needs.create-manifest.result == 'success'
     permissions:
       contents: read
@@ -581,7 +610,7 @@ jobs:
         exit_code: '0'
         format: 'sarif'
         output_file: 'trivy-results.sarif'
-        upload_sarif: 'true'
+        upload_sarif: ${{ needs.check-security-tier.outputs.has-advanced-security }}
         registry_username: ${{ github.actor }}
         registry_password: ${{ secrets.GITHUB_TOKEN }}
 

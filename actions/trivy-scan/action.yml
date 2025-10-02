@@ -102,6 +102,22 @@ runs:
           echo "📄 Results saved to: ${{ inputs.output_file }}"
         fi
 
+    - name: ℹ️ SARIF Upload Skipped (Free Tier)
+      if: inputs.upload_sarif == 'false' && inputs.format == 'sarif'
+      shell: bash
+      run: |
+        echo "⚠️  SARIF upload skipped - GitHub Advanced Security not available"
+        echo ""
+        echo "ℹ️  This is expected for private repositories on GitHub Free tier."
+        echo "ℹ️  Trivy scan completed successfully - results available as artifact."
+        echo ""
+        echo "📊 To enable SARIF upload to GitHub Security tab:"
+        echo "   - Upgrade to GitHub Team/Enterprise, OR"
+        echo "   - Make repository public"
+        echo ""
+        echo "📁 Download scan results:"
+        echo "   Actions → This workflow run → Artifacts → trivy-scan-results-${{ github.run_id }}"
+
     - name: Upload Trivy results to GitHub Security
       if: inputs.upload_sarif == 'true' && inputs.format == 'sarif'
       uses: github/codeql-action/upload-sarif@v3
