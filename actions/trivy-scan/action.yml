@@ -50,6 +50,9 @@ runs:
     - name: Run Trivy vulnerability scanner
       id: scan
       uses: aquasecurity/trivy-action@master
+      env:
+        TRIVY_USERNAME: ${{ inputs.registry_username }}
+        TRIVY_PASSWORD: ${{ inputs.registry_password }}
       with:
         image-ref: ${{ inputs.image }}
         format: ${{ inputs.format }}
