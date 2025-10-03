@@ -177,11 +177,20 @@ jobs:
       with:
         fetch-depth: 0  # Full history for secret scanning
 
-    - name: 🔍 Secret Scanning (Gitleaks)
-      uses: gitleaks/gitleaks-action@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITLEAKS_ENABLE_COMMENTS: false
+    - name: 🔍 Secret Scanning (Gitleaks CLI)
+      run: |
+        echo "🔍 Installing Gitleaks CLI..."
+        wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz
+        tar -xzf gitleaks_8.18.2_linux_x64.tar.gz
+        chmod +x gitleaks
+
+        echo "🔍 Scanning for secrets..."
+        ./gitleaks detect --source . --verbose --no-git || {
+          echo "❌ Secrets detected! Please review and remove them."
+          exit 1
+        }
+
+        echo "✅ No secrets detected"
 
     - name: 📦 Dependency Vulnerability Scan
       run: |
