@@ -429,7 +429,7 @@ jobs:
     name: ⏸️ Approve Staging Deployment
     runs-on: ubuntu-latest
     needs: [setup-and-version, create-manifest, security-scan, performance-tests, load-tests]
-    if: ${{ env.IS_RELEASE_BRANCH == 'true' && inputs.deploy_to_staging }}
+    if: ${{ startsWith(github.ref, 'refs/heads/release/') && inputs.deploy_to_staging }}
     environment:
       name: staging-approval
       url: https://${{ inputs.service_name }}-staging.maestroai
@@ -466,7 +466,7 @@ jobs:
     name: 🚀 Deploy to Staging
     runs-on: ubuntu-latest
     needs: [setup-and-version, approve-staging-deployment]
-    if: ${{ env.IS_RELEASE_BRANCH == 'true' && inputs.deploy_to_staging }}
+    if: ${{ startsWith(github.ref, 'refs/heads/release/') && inputs.deploy_to_staging }}
 
     steps:
     - name: 📥 Checkout infrastructure
@@ -503,7 +503,7 @@ jobs:
     name: 📝 Create GitHub Release
     runs-on: ubuntu-latest
     needs: [setup-and-version, create-manifest, deploy-staging]
-    if: ${{ (env.IS_MAIN_BRANCH == 'true' || env.IS_RELEASE_BRANCH == 'true') && inputs.enable_semantic_release }}
+    if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && inputs.enable_semantic_release }}
     permissions:
       contents: write
 
