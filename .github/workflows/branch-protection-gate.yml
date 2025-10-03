@@ -37,9 +37,16 @@ jobs:
           echo "Ref: ${{ github.ref }}"
           echo "Event name: ${{ github.event_name }}"
 
-          # Check if this is a PR merge commit
+          # Check if this is a PR merge commit (normal merge)
           if [[ "${{ github.event.head_commit.message }}" == *"Merge pull request"* ]]; then
-            echo "✅ Push is from PR merge - allowed"
+            echo "✅ Push is from PR merge (normal) - allowed"
+            echo "is_pr_merge=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if this is a PR squash merge (format: "title (#PR_NUMBER)")
+          if [[ "${{ github.event.head_commit.message }}" =~ \(#[0-9]+\) ]]; then
+            echo "✅ Push is from PR merge (squash) - allowed"
             echo "is_pr_merge=true" >> $GITHUB_OUTPUT
             exit 0
           fi
