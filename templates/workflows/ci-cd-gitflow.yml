@@ -1,0 +1,174 @@
+# CI/CD Gitflow - Complete Strategy
+#
+# This workflow implements the full Gitflow CI/CD strategy with:
+# - Fast CI for feature branches (<10min)
+# - Complete CI for develop (15-20min)
+# - Heavy CI for releases (30-60min with approval gates)
+#
+# Copy this file to your microservice repository as:
+#   .github/workflows/ci-cd.yml
+#
+# Then customize the 'service_name' parameter below.
+
+name: CI/CD Gitflow
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+      - 'release/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # FAST CI - Feature/Fix Branches (<10min)
+  # ============================================================================
+  ci-fast:
+    name: 🚀 CI Fast (Feature)
+    if: |
+      (startsWith(github.ref, 'refs/heads/feature/') ||
+       startsWith(github.ref, 'refs/heads/fix/') ||
+       github.event_name == 'pull_request')
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-fast.yml@main
+    with:
+      service_name: knowledge  # ⚠️  CUSTOMIZE THIS: Change to your service name
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_preview: true     # Set to true to enable preview environments
+      registry: 'ghcr.io'
+    secrets: inherit
+
+  # ============================================================================
+  # COMPLETE CI - Develop Branch (15-20min)
+  # ============================================================================
+  ci-complete:
+    name: 🔧 CI Complete (Develop)
+    if: github.ref == 'refs/heads/develop'
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-complete.yml@main
+    with:
+      service_name: knowledge  # ⚠️  CUSTOMIZE THIS: Change to your service name
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      has_integration_tests: true   # Set to true if you have integration tests
+      enable_contract_tests: false  # Set to true if you have contract tests (Pact)
+      deploy_to_dev: true           # Auto-deploy to Dev environment
+      registry: 'ghcr.io'
+    secrets: inherit
+
+  # ============================================================================
+  # HEAVY CI - Release Branches (30-60min with approval gates)
+  # ============================================================================
+  ci-heavy-release:
+    name: 🎯 CI Heavy (Release)
+    if: startsWith(github.ref, 'refs/heads/release/')
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-heavy.yml@main
+    with:
+      service_name: knowledge  # ⚠️  CUSTOMIZE THIS: Change to your service name
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_performance_tests: true  # Performance benchmarks
+      enable_load_tests: true         # Load testing (K6)
+      enable_e2e_tests: false         # E2E tests (Playwright/Cypress)
+      deploy_to_staging: true         # Deploy to staging after approval
+      deploy_to_production: false     # Don't deploy to prod from release branch
+      enable_semantic_release: true   # Create GitHub release
+      registry: 'ghcr.io'
+    secrets: inherit
+
+  # ============================================================================
+  # PRODUCTION RELEASE - Main Branch (with manual approval)
+  # ============================================================================
+  ci-heavy-production:
+    name: 🏭 Production Release
+    if: github.ref == 'refs/heads/main'
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-heavy.yml@main
+    with:
+      service_name: knowledge  # ⚠️  CUSTOMIZE THIS: Change to your service name
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_performance_tests: false  # Skip perf tests (already done in release)
+      enable_load_tests: false         # Skip load tests (already done in release)
+      enable_e2e_tests: false          # Skip E2E (already done in release)
+      deploy_to_staging: false         # Skip staging (already deployed)
+      deploy_to_production: true       # Deploy to production with approval
+      enable_semantic_release: true    # Create GitHub release + tag
+      registry: 'ghcr.io'
+    secrets: inherit
+
+  # ============================================================================
+  # HOTFIX - Fast-Track to Production (emergency)
+  # ============================================================================
+  ci-hotfix:
+    name: 🚨 Hotfix (Fast-Track)
+    if: startsWith(github.ref, 'refs/heads/hotfix/')
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-heavy.yml@main
+    with:
+      service_name: knowledge  # ⚠️  CUSTOMIZE THIS: Change to your service name
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_performance_tests: false  # Skip for speed
+      enable_load_tests: false         # Skip for speed
+      enable_e2e_tests: false          # Skip for speed
+      deploy_to_staging: true          # Test in staging first
+      deploy_to_production: true       # Then deploy to prod (emergency approval)
+      enable_semantic_release: true    # Create patch release
+      registry: 'ghcr.io'
+    secrets: inherit
+
+# ==============================================================================
+# WORKFLOW SUMMARY
+# ==============================================================================
+#
+# Branch Triggers:
+#   feature/** → CI Fast (4-6min)
+#   fix/**     → CI Fast (4-6min)
+#   PR         → CI Fast (4-6min)
+#   develop    → CI Complete (15-20min) → Auto-deploy Dev
+#   release/** → CI Heavy (30-60min) → Approval → Deploy Staging
+#   main       → CI Heavy + Tag → Approval → Deploy Production
+#   hotfix/**  → CI Heavy (fast-track) → Emergency Approval → Deploy Prod
+#
+# Environments:
+#   Preview (ephemeral) ← feature/fix branches (optional)
+#   Dev (permanent)     ← develop branch (auto)
+#   Staging (permanent) ← release/** branches (manual approval)
+#   Production          ← main branch (manual approval)
+#
+# Approval Gates:
+#   - Staging deployment: Manual approval required (QA/PO)
+#   - Production deployment: Manual approval required (Tech Lead)
+#   - Hotfix: Emergency approval (Tech Lead only)
+#
+# Architecture:
+#   - feature/fix: AMD64 only (fast feedback)
+#   - develop: AMD64 + ARM64 (multi-arch)
+#   - release/main/hotfix: AMD64 + ARM64 (multi-arch)
+#
+# Testing Strategy:
+#   - CI Fast: Lint + Build + Unit Tests + Basic Security
+#   - CI Complete: + Integration Tests + Contract Tests + Full Security
+#   - CI Heavy: + Performance + Load + E2E + Advanced Security
+#
+# Documentation:
+#   - Strategy: infraestructure/maestroai-infrastructure/docs/CI-CD-STRATEGY.md
+#   - Git Flow: infraestructure/maestroai-infrastructure/docs/GIT-FLOW.md
+#   - Environments: infraestructure/maestroai-infrastructure/docs/ENVIRONMENTS.md
+#
+# ==============================================================================

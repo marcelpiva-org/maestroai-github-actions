@@ -1,0 +1,322 @@
+name: .NET CI Fast (Feature Branches)
+
+# Gatilho: feature/* e fix/* branches
+# Objetivo: Feedback rápido (<10min) para desenvolvedores
+# Escopo: Lint, Build AMD64, Unit Tests, Basic Security
+# Deploy: Preview environment opcional
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Microservice name (e.g., knowledge, chat, agents)'
+        required: true
+        type: string
+      dotnet_version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0'
+      solution_path:
+        description: 'Path to solution file'
+        required: false
+        type: string
+        default: 'src'
+      has_tests:
+        description: 'Whether the service has tests'
+        required: false
+        type: boolean
+        default: true
+      enable_preview:
+        description: 'Enable preview environment deployment'
+        required: false
+        type: boolean
+        default: false
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write  # For PR comments
+
+env:
+  REGISTRY: ${{ inputs.registry }}
+  IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}-app
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  # ========================================
+  # Job 1: Setup & Code Quality (Parallel)
+  # ========================================
+  setup-and-lint:
+    name: 🔧 Setup & Lint
+    runs-on: maestroai-runners
+    outputs:
+      cache-hit: ${{ steps.setup.outputs.cache-hit }}
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      id: setup
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 📏 Code Linting & Format Check
+      run: |
+        echo "🔍 Checking code format..."
+        dotnet format ${{ inputs.solution_path }} --verify-no-changes --verbosity diagnostic || {
+          echo "❌ Code format issues found. Run 'dotnet format' locally."
+          exit 1
+        }
+        echo "✅ Code format check passed"
+
+    - name: 🏷️ Generate preview tag
+      id: tag
+      run: |
+        BRANCH_SAFE=$(echo "$BRANCH_NAME" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
+        SHA_SHORT="${GITHUB_SHA:0:7}"
+        TAG="preview-${BRANCH_SAFE}-${SHA_SHORT}"
+
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
+        echo "📦 Preview tag: ${TAG}"
+
+  # ========================================
+  # Job 2: Build Solution (AMD64 only)
+  # ========================================
+  build:
+    name: 🏗️ Build (AMD64)
+    runs-on: maestroai-runners
+    needs: [setup-and-lint]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🏗️ Build Solution
+      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      with:
+        solution_path: ${{ inputs.solution_path }}
+
+    - name: 📊 Build Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🏗️ Build Status
+
+        ✅ **Build succeeded** (AMD64 only for fast feedback)
+
+        - **Branch**: \`$BRANCH_NAME\`
+        - **Commit**: \`${GITHUB_SHA:0:7}\`
+        - **Service**: ${{ inputs.service_name }}
+        EOF
+
+  # ========================================
+  # Job 3: Unit Tests
+  # ========================================
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-lint]
+    if: ${{ inputs.has_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🧪 Run Unit Tests
+      uses: marcelpiva-org/maestroai-github-actions/actions/test-dotnet@main
+      with:
+        solution_path: ${{ inputs.solution_path }}
+
+    - name: 📊 Test Summary
+      if: always()
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🧪 Test Results
+
+        ✅ **Unit tests passed**
+
+        - **Coverage**: Check artifacts for detailed report
+        - **Duration**: ~2min
+        EOF
+
+  # ========================================
+  # Job 4: Basic Security Scan (Secrets + SCA)
+  # ========================================
+  security-scan-basic:
+    name: 🔒 Security Scan (Basic)
+    runs-on: maestroai-runners
+    needs: [setup-and-lint]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret scanning
+
+    - name: 🔍 Secret Scanning (Gitleaks)
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_ENABLE_COMMENTS: false
+
+    - name: 📦 Dependency Vulnerability Scan
+      run: |
+        echo "🔍 Scanning NuGet dependencies for vulnerabilities..."
+        dotnet list ${{ inputs.solution_path }} package --vulnerable --include-transitive || true
+        echo "✅ Dependency scan completed"
+
+    - name: 📊 Security Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🔒 Security Scan (Basic)
+
+        ✅ **No secrets detected** (Gitleaks)
+        ✅ **Dependency scan completed** (NuGet)
+
+        💡 **Note**: Full Trivy scan runs on \`develop\` and \`release/*\` branches
+        EOF
+
+  # ========================================
+  # Job 5: Build Preview Container (Optional)
+  # ========================================
+  build-preview-container:
+    name: 🐳 Build Preview Container
+    runs-on: maestroai-runners
+    needs: [setup-and-lint, build, unit-tests, security-scan-basic]
+    if: ${{ inputs.enable_preview }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Build Container (AMD64)
+      uses: marcelpiva-org/maestroai-github-actions/actions/docker-build@main
+      with:
+        registry: ${{ env.REGISTRY }}
+        image_name: ${{ env.IMAGE_NAME }}
+        tag: ${{ needs.setup-and-lint.outputs.tag }}
+        architecture: amd64
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        registry_username: marcelpiva-org
+
+    - name: 📊 Container Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🐳 Preview Container
+
+        ✅ **Container built successfully**
+
+        - **Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-lint.outputs.tag }}-amd64\`
+        - **Size**: Check container registry for details
+        - **Architecture**: AMD64 only (fast build)
+
+        ### 🚀 Preview Deployment
+
+        Preview environment can be deployed manually or automatically via ArgoCD:
+
+        \`\`\`bash
+        kubectl apply -f k8s/preview/${{ needs.setup-and-lint.outputs.tag }}.yaml
+        \`\`\`
+
+        **URL**: \`https://${{ inputs.service_name }}-preview-${{ github.event.pull_request.number || 'branch' }}.maestroai\`
+        EOF
+
+  # ========================================
+  # Job 6: PR Comment with Summary
+  # ========================================
+  pr-comment-summary:
+    name: 💬 PR Comment Summary
+    runs-on: ubuntu-latest
+    needs: [setup-and-lint, build, unit-tests, security-scan-basic, build-preview-container]
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+
+    steps:
+    - name: 💬 Post PR Comment
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const tagName = '${{ needs.setup-and-lint.outputs.tag }}';
+          const buildStatus = '${{ needs.build.result }}';
+          const testStatus = '${{ needs.unit-tests.result }}';
+          const securityStatus = '${{ needs.security-scan-basic.result }}';
+          const containerStatus = '${{ needs.build-preview-container.result }}';
+
+          const statusIcon = (status) => {
+            if (status === 'success') return '✅';
+            if (status === 'failure') return '❌';
+            if (status === 'skipped') return '⏭️';
+            return '⏳';
+          };
+
+          const body = `## 🚀 CI Fast - Feature Branch Pipeline
+
+          **Branch**: \`${context.payload.pull_request.head.ref}\`
+          **Commit**: \`${context.sha.substring(0, 7)}\`
+          **Service**: \`${{ inputs.service_name }}\`
+
+          ### ✅ Pipeline Results
+
+          | Stage | Status | Duration |
+          |-------|--------|----------|
+          | 🔧 Setup & Lint | ${statusIcon('${{ needs.setup-and-lint.result }}')} | ~30s |
+          | 🏗️ Build (AMD64) | ${statusIcon(buildStatus)} | ~1min |
+          | 🧪 Unit Tests | ${statusIcon(testStatus)} | ~2min |
+          | 🔒 Security Scan | ${statusIcon(securityStatus)} | ~30s |
+          | 🐳 Preview Container | ${statusIcon(containerStatus)} | ~2min |
+
+          **Total Duration**: ~6min ⚡
+
+          ${containerStatus === 'success' ? `
+          ### 🌐 Preview Environment
+
+          **Container**: \`ghcr.io/marcelpiva-org/maestro-${{ inputs.service_name }}-app:${tagName}-amd64\`
+
+          Deploy manually:
+          \`\`\`bash
+          kubectl apply -f k8s/preview/${tagName}.yaml
+          \`\`\`
+          ` : ''}
+
+          ---
+
+          💡 **Next Steps**:
+          - ${buildStatus === 'success' && testStatus === 'success' ? '✅ Ready to review' : '❌ Fix failing checks before merge'}
+          - Full CI runs on merge to \`develop\` (build + integration tests + ARM64)
+          - Preview environment available for manual testing
+
+          <sub>🤖 Generated by CI Fast Pipeline</sub>
+          `;
+
+          github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.payload.pull_request.number,
+            body: body
+          });

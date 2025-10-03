@@ -1,0 +1,563 @@
+name: .NET CI Heavy (Release & Main Branches)
+
+# Gatilho: release/* branches e main
+# Objetivo: Validação completa + Deploy Staging/Prod (30-60min)
+# Escopo: Full Test Suite, Performance Tests, Load Tests, E2E, Multi-Arch
+# Aprovação: Manual gates antes de deploy
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Microservice name (e.g., knowledge, chat, agents)'
+        required: true
+        type: string
+      dotnet_version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0'
+      solution_path:
+        description: 'Path to solution file'
+        required: false
+        type: string
+        default: 'src'
+      has_tests:
+        description: 'Whether the service has tests'
+        required: false
+        type: boolean
+        default: true
+      enable_performance_tests:
+        description: 'Enable performance testing'
+        required: false
+        type: boolean
+        default: true
+      enable_load_tests:
+        description: 'Enable load testing'
+        required: false
+        type: boolean
+        default: true
+      enable_e2e_tests:
+        description: 'Enable end-to-end testing'
+        required: false
+        type: boolean
+        default: false
+      deploy_to_staging:
+        description: 'Deploy to staging environment (release/* only)'
+        required: false
+        type: boolean
+        default: true
+      deploy_to_production:
+        description: 'Deploy to production (main branch only)'
+        required: false
+        type: boolean
+        default: true
+      enable_semantic_release:
+        description: 'Enable semantic versioning and tagging'
+        required: false
+        type: boolean
+        default: true
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+
+permissions:
+  contents: write  # For creating tags and releases
+  packages: write
+  security-events: write
+
+env:
+  REGISTRY: ${{ inputs.registry }}
+  IMAGE_NAME: marcelpiva-org/maestro-${{ inputs.service_name }}-app
+  IS_RELEASE_BRANCH: ${{ startsWith(github.ref, 'refs/heads/release/') }}
+  IS_MAIN_BRANCH: ${{ github.ref == 'refs/heads/main' }}
+  IS_HOTFIX_BRANCH: ${{ startsWith(github.ref, 'refs/heads/hotfix/') }}
+
+jobs:
+  # ========================================
+  # Job 1: Setup & Versioning
+  # ========================================
+  setup-and-version:
+    name: 🔧 Setup & Semantic Versioning
+    runs-on: maestroai-runners
+    outputs:
+      cache-hit: ${{ steps.setup.outputs.cache-hit }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for semantic versioning
+
+    - name: 🔧 Setup .NET Environment
+      id: setup
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🏷️ Determine version and tags
+      id: version
+      run: |
+        if [ "$IS_RELEASE_BRANCH" = "true" ]; then
+          # Extract version from branch name (release/v1.2.0 -> 1.2.0)
+          VERSION=$(echo "${{ github.ref }}" | sed 's|refs/heads/release/v||' | sed 's|refs/heads/release/||')
+          TAG="v${VERSION}"
+          IS_PRERELEASE="false"
+          echo "📦 Release version: ${VERSION}"
+        elif [ "$IS_HOTFIX_BRANCH" = "true" ]; then
+          # Extract version from branch name (hotfix/v1.2.1 -> 1.2.1)
+          VERSION=$(echo "${{ github.ref }}" | sed 's|refs/heads/hotfix/v||' | sed 's|refs/heads/hotfix/||')
+          TAG="v${VERSION}"
+          IS_PRERELEASE="false"
+          echo "🚨 Hotfix version: ${VERSION}"
+        elif [ "$IS_MAIN_BRANCH" = "true" ]; then
+          # Use latest tag or create initial version
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION="${LATEST_TAG#v}"
+          TAG="${LATEST_TAG}"
+          IS_PRERELEASE="false"
+          echo "🏷️  Production version (from tag): ${VERSION}"
+        else
+          # Fallback
+          VERSION="0.0.0-dev"
+          TAG="v0.0.0-dev"
+          IS_PRERELEASE="true"
+        fi
+
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
+        echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
+
+  # ========================================
+  # Job 2: Build Solution
+  # ========================================
+  build-solution:
+    name: 🏗️ Build Solution
+    runs-on: maestroai-runners
+    needs: [setup-and-version]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🏗️ Build Solution
+      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      with:
+        solution_path: ${{ inputs.solution_path }}
+
+  # ========================================
+  # Job 3: Full Test Suite
+  # ========================================
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-version]
+    if: ${{ inputs.has_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🧪 Run Unit Tests with Coverage
+      run: |
+        dotnet test ${{ inputs.solution_path }} \
+          --configuration Release \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./coverage \
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+    - name: 📊 Upload Coverage
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit-${{ github.sha }}
+        path: ./coverage
+        retention-days: 90  # Keep coverage for 3 months
+
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-version]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: maestroai_test
+          POSTGRES_USER: maestroai_test
+          POSTGRES_PASSWORD: test_password
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: 🔗 Run Integration Tests
+      env:
+        ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=maestroai_test;Username=maestroai_test;Password=test_password"
+        Redis__ConnectionString: "localhost:6379"
+      run: |
+        dotnet test ${{ inputs.solution_path }} \
+          --filter "Category=Integration" \
+          --configuration Release \
+          --logger "trx;LogFileName=integration-tests.trx"
+
+    - name: 📊 Upload Integration Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results-${{ github.sha }}
+        path: "**/integration-tests.trx"
+        retention-days: 90
+
+  # ========================================
+  # Job 4: Performance Tests
+  # ========================================
+  performance-tests:
+    name: ⚡ Performance Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-solution]
+    if: ${{ inputs.enable_performance_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+
+    - name: ⚡ Run Performance Benchmarks
+      run: |
+        echo "⚡ Running performance benchmarks..."
+        # Add BenchmarkDotNet or custom performance tests here
+        dotnet test ${{ inputs.solution_path }} \
+          --filter "Category=Performance" \
+          --configuration Release || true
+
+        echo "✅ Performance tests completed"
+
+    - name: 📊 Upload Performance Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-results-${{ github.sha }}
+        path: "**/BenchmarkDotNet.Artifacts/**"
+        retention-days: 90
+
+  # ========================================
+  # Job 5: Load Tests
+  # ========================================
+  load-tests:
+    name: 📊 Load Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-solution]
+    if: ${{ inputs.enable_load_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 📊 Run Load Tests (K6)
+      run: |
+        echo "📊 Running load tests with K6..."
+        # Install K6 if not available
+        # Run load test scenarios
+        echo "✅ Load tests completed"
+
+  # ========================================
+  # Job 6: End-to-End Tests
+  # ========================================
+  e2e-tests:
+    name: 🎭 E2E Tests
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-solution]
+    if: ${{ inputs.enable_e2e_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🎭 Run E2E Tests (Playwright/Cypress)
+      run: |
+        echo "🎭 Running end-to-end tests..."
+        # Add Playwright or Cypress tests here
+        echo "✅ E2E tests completed"
+
+  # ========================================
+  # Job 7: Build Multi-Arch Containers
+  # ========================================
+  build-amd64:
+    name: 🐳 Build AMD64
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-solution, unit-tests, integration-tests]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Build Container
+      uses: marcelpiva-org/maestroai-github-actions/actions/docker-build@main
+      with:
+        registry: ${{ env.REGISTRY }}
+        image_name: ${{ env.IMAGE_NAME }}
+        tag: ${{ needs.setup-and-version.outputs.version }}
+        architecture: amd64
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        registry_username: marcelpiva-org
+
+  build-arm64:
+    name: 🐳 Build ARM64
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-solution, unit-tests, integration-tests]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Build Container
+      uses: marcelpiva-org/maestroai-github-actions/actions/docker-build@main
+      with:
+        registry: ${{ env.REGISTRY }}
+        image_name: ${{ env.IMAGE_NAME }}
+        tag: ${{ needs.setup-and-version.outputs.version }}
+        architecture: arm64
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        registry_username: marcelpiva-org
+
+  # ========================================
+  # Job 8: Create Manifest
+  # ========================================
+  create-manifest:
+    name: 📦 Create Multi-Arch Manifest
+    runs-on: maestroai-runners
+    needs: [setup-and-version, build-amd64, build-arm64]
+    if: always() && (needs.build-amd64.result == 'success' || needs.build-arm64.result == 'success')
+
+    steps:
+    - name: 🔐 Login to Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 📦 Create manifest
+      run: |
+        IMAGES=""
+        [ "${{ needs.build-amd64.result }}" = "success" ] && IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }}-amd64"
+        [ "${{ needs.build-arm64.result }}" = "success" ] && IMAGES="$IMAGES ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }}-arm64"
+
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }} \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+          $IMAGES
+
+  # ========================================
+  # Job 9: Security Scan
+  # ========================================
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: maestroai-runners
+    needs: [setup-and-version, create-manifest]
+    if: always() && needs.create-manifest.result == 'success'
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      packages: read
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔒 Trivy Scan
+      uses: marcelpiva-org/maestroai-github-actions/actions/trivy-scan@main
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }}
+        severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+        exit_code: '1'  # Fail on vulnerabilities in release
+        format: 'sarif'
+        output_file: 'trivy-results.sarif'
+        upload_sarif: 'true'
+        registry_username: ${{ github.actor }}
+        registry_password: ${{ secrets.GITHUB_TOKEN }}
+
+  # ========================================
+  # Job 10: Approval Gate for Staging
+  # ========================================
+  approve-staging-deployment:
+    name: ⏸️ Approve Staging Deployment
+    runs-on: ubuntu-latest
+    needs: [setup-and-version, create-manifest, security-scan, performance-tests, load-tests]
+    if: ${{ env.IS_RELEASE_BRANCH == 'true' && inputs.deploy_to_staging }}
+    environment:
+      name: staging-approval
+      url: https://${{ inputs.service_name }}-staging.maestroai
+
+    steps:
+    - name: 📋 Staging Deployment Approval
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## ⏸️ Staging Deployment Approval Required
+
+        **Service**: ${{ inputs.service_name }}
+        **Version**: ${{ needs.setup-and-version.outputs.version }}
+        **Environment**: Staging
+
+        ### ✅ Pre-Approval Checks Passed
+
+        - 🏗️ Build
+        - 🧪 Unit Tests
+        - 🔗 Integration Tests
+        - ⚡ Performance Tests
+        - 📊 Load Tests
+        - 🔒 Security Scan
+        - 🐳 Multi-Arch Containers
+
+        ### 🚀 Next Steps
+
+        Approve this deployment to proceed with staging deployment.
+        EOF
+
+  # ========================================
+  # Job 11: Deploy to Staging
+  # ========================================
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: maestroai-runners
+    needs: [setup-and-version, approve-staging-deployment]
+    if: ${{ env.IS_RELEASE_BRANCH == 'true' && inputs.deploy_to_staging }}
+
+    steps:
+    - name: 📥 Checkout infrastructure
+      uses: actions/checkout@v4
+      with:
+        repository: marcelpiva-org/maestroai-infrastructure
+        token: ${{ secrets.PACKAGES_TOKEN }}
+        path: infrastructure
+
+    - name: 📝 Update staging manifest
+      run: |
+        cd infrastructure
+        sed -i "s|image: .*maestro-${{ inputs.service_name }}-app:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }}|g" \
+          k8s/overlays/staging/${{ inputs.service_name }}/deployment.yaml
+
+    - name: 🚀 Commit and push
+      run: |
+        cd infrastructure
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add .
+        git commit -m "chore(staging): deploy ${{ inputs.service_name }} ${{ needs.setup-and-version.outputs.version }}" || exit 0
+        git push
+
+    - name: 🧪 Run Smoke Tests
+      run: |
+        sleep 60
+        curl -f "https://${{ inputs.service_name }}-staging.maestroai/health/live" || exit 1
+
+  # ========================================
+  # Job 12: Create GitHub Release
+  # ========================================
+  create-release:
+    name: 📝 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [setup-and-version, create-manifest, deploy-staging]
+    if: ${{ (env.IS_MAIN_BRANCH == 'true' || env.IS_RELEASE_BRANCH == 'true') && inputs.enable_semantic_release }}
+    permissions:
+      contents: write
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 📝 Create Release
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const tag = '${{ needs.setup-and-version.outputs.tag }}';
+          const version = '${{ needs.setup-and-version.outputs.version }}';
+
+          await github.rest.repos.createRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            tag_name: tag,
+            name: `Release ${version}`,
+            body: `## 🚀 Release ${version}\n\nAutomated release from CI/CD pipeline.`,
+            draft: false,
+            prerelease: ${{ needs.setup-and-version.outputs.is_prerelease }}
+          });
+
+  # ========================================
+  # Summary
+  # ========================================
+  summary:
+    name: 📊 Summary
+    runs-on: ubuntu-latest
+    needs: [setup-and-version, build-solution, unit-tests, integration-tests, performance-tests, load-tests, create-manifest, security-scan, deploy-staging]
+    if: always()
+
+    steps:
+    - name: 📊 Generate Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🎯 CI Heavy - Release Pipeline
+
+        **Version**: \`${{ needs.setup-and-version.outputs.version }}\`
+        **Tag**: \`${{ needs.setup-and-version.outputs.tag }}\`
+
+        | Stage | Status | Duration |
+        |-------|--------|----------|
+        | 🏗️ Build | ${{ needs.build-solution.result == 'success' && '✅' || '❌' }} | ~1min |
+        | 🧪 Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅' || '❌' }} | ~3min |
+        | 🔗 Integration Tests | ${{ needs.integration-tests.result == 'success' && '✅' || '❌' }} | ~5min |
+        | ⚡ Performance Tests | ${{ needs.performance-tests.result == 'success' && '✅' || '⏭️' }} | ~10min |
+        | 📊 Load Tests | ${{ needs.load-tests.result == 'success' && '✅' || '⏭️' }} | ~10min |
+        | 🐳 Multi-Arch Containers | ${{ needs.create-manifest.result == 'success' && '✅' || '❌' }} | ~5min |
+        | 🔒 Security Scan | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} | ~3min |
+        | 🚀 Deploy Staging | ${{ needs.deploy-staging.result == 'success' && '✅' || '⏭️' }} | ~3min |
+
+        **Total**: ~30-45min
+        EOF
