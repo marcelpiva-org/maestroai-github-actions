@@ -174,15 +174,6 @@ jobs:
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Full history for secret scanning
-
-    - name: 🔍 Secret Scanning (Gitleaks)
-      uses: gitleaks/gitleaks-action@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-        GITLEAKS_ENABLE_COMMENTS: false
 
     - name: 📦 Dependency Vulnerability Scan
       run: |
@@ -195,10 +186,9 @@ jobs:
         cat >> $GITHUB_STEP_SUMMARY << EOF
         ## 🔒 Security Scan (Basic)
 
-        ✅ **No secrets detected** (Gitleaks)
         ✅ **Dependency scan completed** (NuGet)
 
-        💡 **Note**: Full security scan (Trivy) runs on \`develop\` and \`release/*\` branches
+        💡 **Note**: Full security scan (Trivy with secret scanning) runs on \`develop\` and \`release/*\` branches
         EOF
 
   # ========================================
