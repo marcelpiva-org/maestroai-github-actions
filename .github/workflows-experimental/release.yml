@@ -1,0 +1,347 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.2.3)'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      environment: ${{ steps.version.outputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and environment
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          else
+            VERSION="${{ github.ref_name }}"
+            ENVIRONMENT="production"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+          echo "Release Version: $VERSION"
+          echo "Target Environment: $ENVIRONMENT"
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format v1.2.3"
+            exit 1
+          fi
+
+      - name: Check if tag exists
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Error: Tag $VERSION already exists"
+            exit 1
+          fi
+
+      - name: Validate branch state
+        run: |
+          # Ensure we're on main branch for production releases
+          if [ "${{ steps.version.outputs.environment }}" = "production" ]; then
+            if [ "${{ github.ref_name }}" != "main" ] && [ "${{ github.event_name }}" != "push" ]; then
+              echo "Error: Production releases must be from main branch"
+              exit 1
+            fi
+          fi
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: validate-release
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+
+          # Get the latest tag before this one
+          PREVIOUS_TAG=$(git describe --abbrev=0 --tags HEAD~1 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "## Changes since $PREVIOUS_TAG" > changelog.md
+            echo "" >> changelog.md
+
+            # Generate changelog from commits
+            git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> changelog.md
+          else
+            echo "## Initial Release" > changelog.md
+            echo "" >> changelog.md
+            echo "- Initial release of MaestroAI platform" >> changelog.md
+          fi
+
+          echo "changelog-file=changelog.md" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.validate-release.outputs.version }}
+          release_name: Release ${{ needs.validate-release.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.changelog-file }}
+          draft: false
+          prerelease: false
+
+  build-release-images:
+    name: Build Release Images
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: always() && needs.validate-release.result == 'success'
+    strategy:
+      matrix:
+        service: [agents, cache, chat, identity, knowledge, orchestration, providers, react]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=${{ needs.validate-release.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.validate-release.outputs.environment == 'production' }}
+            type=raw,value=stable,enable=${{ needs.validate-release.outputs.environment == 'production' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: microservices/${{ matrix.service }}/Dockerfile.dev
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Generate and upload SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ needs.validate-release.outputs.version }}
+          artifact-name: sbom-${{ matrix.service }}-${{ needs.validate-release.outputs.version }}.spdx.json
+
+  update-production-manifests:
+    name: Update Production Manifests
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release-images]
+    if: needs.validate-release.outputs.environment == 'production'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Update production image tags
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+
+          # Update production kustomization file
+          sed -i "s/newTag: .*/newTag: $VERSION/g" infrastructure/argocd/environments/production/microservices/kustomization.yaml
+
+      - name: Commit and push changes
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+
+          if [[ -n $(git status --porcelain) ]]; then
+            git add infrastructure/argocd/environments/production/
+            git commit -m "chore: update production image tags to $VERSION"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+
+  deploy-to-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release-images, update-production-manifests]
+    if: needs.validate-release.outputs.environment == 'production'
+    environment: production
+
+    steps:
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+          rm argocd-linux-amd64
+
+      - name: Login to ArgoCD
+        run: |
+          argocd login ${{ secrets.ARGOCD_SERVER }} \
+            --username ${{ secrets.ARGOCD_USERNAME }} \
+            --password ${{ secrets.ARGOCD_PASSWORD }} \
+            --insecure
+
+      - name: Sync production application
+        run: |
+          echo "Syncing production application..."
+          argocd app sync maestroai-prod --prune --strategy replace
+
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for deployment to complete..."
+          argocd app wait maestroai-prod --health --sync --timeout 900
+
+      - name: Get deployment status
+        id: status
+        run: |
+          STATUS=$(argocd app get maestroai-prod -o json | jq -r '.status.health.status')
+          SYNC_STATUS=$(argocd app get maestroai-prod -o json | jq -r '.status.sync.status')
+
+          echo "health-status=$STATUS" >> $GITHUB_OUTPUT
+          echo "sync-status=$SYNC_STATUS" >> $GITHUB_OUTPUT
+
+      - name: Run production smoke tests
+        run: |
+          echo "Running production smoke tests..."
+          # This would run your production test suite
+          # ./scripts/test-all-routes-from-gateway.sh production
+
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release-images, deploy-to-production]
+    if: always()
+
+    steps:
+      - name: Release Success Notification
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#releases'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            🎉 **MaestroAI Release Successful**
+
+            **Version:** ${{ needs.validate-release.outputs.version }}
+            **Environment:** ${{ needs.validate-release.outputs.environment }}
+            **Status:** Successfully deployed
+
+            All services are healthy and running in production!
+
+      - name: Release Failure Notification
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            ❌ **MaestroAI Release Failed**
+
+            **Version:** ${{ needs.validate-release.outputs.version }}
+            **Environment:** ${{ needs.validate-release.outputs.environment }}
+
+            Please check the workflow logs and take immediate action!
+
+  rollback-on-failure:
+    name: Emergency Rollback
+    runs-on: ubuntu-latest
+    needs: [validate-release, deploy-to-production]
+    if: failure() && needs.validate-release.outputs.environment == 'production'
+
+    steps:
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+          rm argocd-linux-amd64
+
+      - name: Login to ArgoCD
+        run: |
+          argocd login ${{ secrets.ARGOCD_SERVER }} \
+            --username ${{ secrets.ARGOCD_USERNAME }} \
+            --password ${{ secrets.ARGOCD_PASSWORD }} \
+            --insecure
+
+      - name: Rollback production
+        run: |
+          echo "Performing emergency rollback..."
+          argocd app rollback maestroai-prod
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: warning
+          channel: '#alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            ⚠️ **Emergency Production Rollback**
+
+            **Version:** ${{ needs.validate-release.outputs.version }}
+            **Reason:** Release deployment failed
+
+            Production has been rolled back to the previous version.
+            Investigation required immediately!

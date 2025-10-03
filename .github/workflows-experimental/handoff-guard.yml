@@ -1,0 +1,51 @@
+name: Handoff Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate-handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed files
+        id: diff
+        run: |
+          echo "BASE_REF=${{ github.base_ref }}" >> $GITHUB_ENV
+          echo "HEAD_REF=${{ github.head_ref }}" >> $GITHUB_ENV
+          git fetch origin ${GITHUB_BASE_REF:-${{ github.base_ref }}} --depth=1 || true
+          BASE_SHA=$(git rev-parse origin/${GITHUB_BASE_REF:-${{ github.base_ref }}} 2>/dev/null || echo '')
+          if [ -n "$BASE_SHA" ]; then
+            CHANGED=$(git diff --name-only $BASE_SHA...HEAD)
+          else
+            # Fallback to comparing with previous commit
+            CHANGED=$(git diff --name-only HEAD^ HEAD || true)
+          fi
+          echo "changed<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Enforce plan/changelog updates
+        run: |
+          CHANGED_FILES="${{ steps.diff.outputs.changed }}"
+          echo "Changed files:\n$CHANGED_FILES"
+
+          # If core paths changed, ensure plan updated
+          echo "$CHANGED_FILES" | grep -E '^(cli/|microservices/|infrastructure/)' >/dev/null 2>&1 || exit 0
+
+          echo "$CHANGED_FILES" | grep -E '^DEVELOPMENT_PLAN\.md$' >/dev/null 2>&1 && PLAN_UPDATED=1 || PLAN_UPDATED=0
+          echo "$CHANGED_FILES" | grep -E '^CHANGELOG\.md$' >/dev/null 2>&1 && CL_UPDATED=1 || CL_UPDATED=0
+
+          if [ "$PLAN_UPDATED" -ne 1 ]; then
+            echo '::error::DEVELOPMENT_PLAN.md must be updated when changing cli/microservices/infrastructure.'
+            exit 1
+          fi
+
+          # Changelog recommended but not required for small changes; warn if missing
+          if [ "$CL_UPDATED" -ne 1 ]; then
+            echo '::warning::Consider updating CHANGELOG.md for significant changes.'
+          fi
+

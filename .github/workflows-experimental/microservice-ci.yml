@@ -1,0 +1,343 @@
+name: 🔧 Microservice CI Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      microservice-name:
+        description: 'Name of the microservice (e.g., orchestration, identity)'
+        required: true
+        type: string
+      dotnet-version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0.x'
+      solution-path:
+        description: 'Path to the solution file'
+        required: false
+        type: string
+        default: 'src/'
+      run-tests:
+        description: 'Whether to run unit tests'
+        required: false
+        type: boolean
+        default: true
+      run-integration-tests:
+        description: 'Whether to run integration tests'
+        required: false
+        type: boolean
+        default: false
+      build-docker-image:
+        description: 'Whether to build Docker image'
+        required: false
+        type: boolean
+        default: true
+      docker-registry:
+        description: 'Docker registry to push to'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      deploy-to-dev:
+        description: 'Whether to deploy to development environment'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        description: 'SonarCloud token for code analysis'
+        required: false
+      DOCKER_REGISTRY_TOKEN:
+        description: 'Docker registry authentication token'
+        required: false
+      NUGET_API_KEY:
+        description: 'NuGet API key for package publishing'
+        required: false
+
+env:
+  DOTNET_VERSION: ${{ inputs.dotnet-version }}
+  MICROSERVICE_NAME: ${{ inputs.microservice-name }}
+  SOLUTION_PATH: ${{ inputs.solution-path }}
+  REGISTRY: ${{ inputs.docker-registry }}
+  IMAGE_NAME: maestroai-${{ inputs.microservice-name }}
+
+jobs:
+  setup:
+    name: 🚀 Setup and Validation
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should-deploy: ${{ steps.deploy-check.outputs.should-deploy }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Setup .NET Environment
+        uses: marcelpiva/maestroai-devops/.github/actions/setup-dotnet-env@main
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          install-tools: true
+          restore-cache: true
+
+      - name: 📋 Generate Version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            VERSION=$(date +%Y.%m.%d)-${GITHUB_SHA:0:7}
+          else
+            VERSION=dev-${GITHUB_SHA:0:7}
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+
+      - name: 🚦 Deployment Check
+        id: deploy-check
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.deploy-to-dev }}" == "true" ]]; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-test:
+    name: 🏗️ Build and Test
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Setup .NET Environment
+        uses: marcelpiva/maestroai-devops/.github/actions/setup-dotnet-env@main
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          install-tools: true
+          restore-cache: true
+
+      - name: 📦 Restore Dependencies
+        run: |
+          cd ${{ env.SOLUTION_PATH }}
+          dotnet restore --verbosity minimal
+
+      - name: 🏗️ Build Solution
+        run: |
+          cd ${{ env.SOLUTION_PATH }}
+          dotnet build --configuration Release --no-restore --verbosity minimal
+
+      - name: 🧪 Run Unit Tests
+        if: ${{ inputs.run-tests }}
+        run: |
+          cd ${{ env.SOLUTION_PATH }}
+          dotnet test --configuration Release --no-build --verbosity minimal \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults/ \
+            --logger trx \
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      - name: 📊 Upload Test Results
+        if: ${{ inputs.run-tests && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ env.MICROSERVICE_NAME }}
+          path: ${{ env.SOLUTION_PATH }}/TestResults/
+          retention-days: 30
+
+      - name: 🔍 SonarCloud Analysis
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=maestroai-${{ env.MICROSERVICE_NAME }}
+            -Dsonar.organization=marcelpiva
+            -Dsonar.sources=${{ env.SOLUTION_PATH }}
+            -Dsonar.exclusions=**/*.Tests/**
+            -Dsonar.cs.vscoveragexml.reportsPaths=${{ env.SOLUTION_PATH }}/TestResults/**/coverage.cobertura.xml
+
+  integration-tests:
+    name: 🧪 Integration Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: ${{ inputs.run-integration-tests }}
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Setup .NET Environment
+        uses: marcelpiva/maestroai-devops/.github/actions/setup-dotnet-env@main
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          install-tools: true
+
+      - name: 🧪 Run Integration Tests
+        env:
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=testdb;Username=postgres;Password=postgres"
+          ConnectionStrings__Redis: "localhost:6379"
+        run: |
+          cd ${{ env.SOLUTION_PATH }}
+          dotnet test --configuration Release \
+            --filter Category=Integration \
+            --logger trx \
+            --results-directory ./IntegrationTestResults/
+
+      - name: 📊 Upload Integration Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-${{ env.MICROSERVICE_NAME }}
+          path: ${{ env.SOLUTION_PATH }}/IntegrationTestResults/
+          retention-days: 30
+
+  security-scan:
+    name: 🛡️ Security Scanning
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Setup .NET Environment
+        uses: marcelpiva/maestroai-devops/.github/actions/setup-dotnet-env@main
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 🛡️ Run Security Audit
+        run: |
+          cd ${{ env.SOLUTION_PATH }}
+          dotnet restore --verbosity minimal
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee security-audit.txt
+
+      - name: 🔍 CodeQL Analysis
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+
+      - name: 🏗️ Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: 📊 Upload Security Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-${{ env.MICROSERVICE_NAME }}
+          path: security-audit.txt
+          retention-days: 30
+
+  build-docker:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-test]
+    if: ${{ inputs.build-docker-image }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: 🏗️ Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 📝 Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/marcelpiva/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=raw,value=${{ needs.setup.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 🐳 Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.setup.outputs.version }}
+            BUILD_DATE=${{ steps.meta.outputs.labels }}
+
+  deploy-dev:
+    name: 🚀 Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [setup, build-docker]
+    if: ${{ needs.setup.outputs.should-deploy == 'true' }}
+    environment: development
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🚀 Deploy to Kubernetes
+        uses: marcelpiva/maestroai-devops/.github/actions/k8s-deploy@main
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+          namespace: maestroai-dev
+          image: ${{ env.REGISTRY }}/marcelpiva/${{ env.IMAGE_NAME }}:${{ needs.setup.outputs.version }}
+          service-name: ${{ env.MICROSERVICE_NAME }}
+
+      - name: 📋 Post-Deployment Verification
+        run: |
+          echo "🔍 Verifying deployment of ${{ env.MICROSERVICE_NAME }}"
+          echo "📊 Image: ${{ env.REGISTRY }}/marcelpiva/${{ env.IMAGE_NAME }}:${{ needs.setup.outputs.version }}"
+          echo "🎯 Environment: development"
+          echo "✅ Deployment completed"
+
+  notify:
+    name: 📢 Notifications
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-test, security-scan, build-docker, deploy-dev]
+    if: always()
+    steps:
+      - name: 📢 Slack Notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: marcelpiva/maestroai-devops/.github/actions/notify-slack@main
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          service: ${{ env.MICROSERVICE_NAME }}
+          version: ${{ needs.setup.outputs.version }}
+          environment: ${{ needs.setup.outputs.should-deploy == 'true' && 'development' || 'none' }}

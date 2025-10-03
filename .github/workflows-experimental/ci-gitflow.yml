@@ -1,0 +1,295 @@
+name: CI - GitFlow Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'release/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  determine-strategy:
+    name: Determine Build Strategy
+    runs-on: ubuntu-latest
+    outputs:
+      build-images: ${{ steps.strategy.outputs.build-images }}
+      run-tests: ${{ steps.strategy.outputs.run-tests }}
+      push-images: ${{ steps.strategy.outputs.push-images }}
+      environment: ${{ steps.strategy.outputs.environment }}
+      version-tag: ${{ steps.strategy.outputs.version-tag }}
+    steps:
+      - name: Determine strategy
+        id: strategy
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "build-images=true" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=true" >> $GITHUB_OUTPUT
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "version-tag=v${{ github.run_number }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "build-images=true" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=true" >> $GITHUB_OUTPUT
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "version-tag=develop-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/release/ ]]; then
+            echo "build-images=true" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=true" >> $GITHUB_OUTPUT
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "version-tag=staging-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/feature/ ]]; then
+            echo "build-images=true" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=false" >> $GITHUB_OUTPUT
+            echo "environment=feature" >> $GITHUB_OUTPUT
+            echo "version-tag=feature-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/hotfix/ ]]; then
+            echo "build-images=true" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=true" >> $GITHUB_OUTPUT
+            echo "environment=hotfix" >> $GITHUB_OUTPUT
+            echo "version-tag=hotfix-${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "build-images=false" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "push-images=false" >> $GITHUB_OUTPUT
+            echo "environment=pr" >> $GITHUB_OUTPUT
+            echo "version-tag=pr-${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    needs: determine-strategy
+    if: needs.determine-strategy.outputs.run-tests == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache .NET packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore .NET dependencies
+        run: |
+          for service in agents cache chat identity knowledge orchestration providers; do
+            if [ -f "microservices/$service/MaestroAI.$service.API/MaestroAI.$service.API.csproj" ]; then
+              dotnet restore "microservices/$service/MaestroAI.$service.API/MaestroAI.$service.API.csproj"
+            fi
+          done
+
+      - name: .NET Code formatting check
+        run: dotnet format --verify-no-changes --verbosity diagnostic
+
+      - name: Security scan with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  test-microservices:
+    name: Test Microservices
+    runs-on: ubuntu-latest
+    needs: determine-strategy
+    if: needs.determine-strategy.outputs.run-tests == 'true'
+    strategy:
+      matrix:
+        service: [agents, cache, chat, identity, knowledge, orchestration, providers]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache .NET packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore .NET dependencies
+        run: |
+          if [ -f "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.API/MaestroAI.${{ matrix.service }}.API.csproj" ]; then
+            dotnet restore "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.API/MaestroAI.${{ matrix.service }}.API.csproj"
+          fi
+
+      - name: Build .NET service
+        run: |
+          if [ -f "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.API/MaestroAI.${{ matrix.service }}.API.csproj" ]; then
+            dotnet build "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.API/MaestroAI.${{ matrix.service }}.API.csproj" --configuration Release --no-restore
+          fi
+
+      - name: Run .NET tests
+        run: |
+          if [ -d "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.Tests" ]; then
+            dotnet test "microservices/${{ matrix.service }}/MaestroAI.${{ matrix.service }}.Tests/MaestroAI.${{ matrix.service }}.Tests.csproj" \
+              --configuration Release \
+              --no-build \
+              --verbosity normal \
+              --collect:"XPlat Code Coverage" \
+              --results-directory ./coverage
+          else
+            echo "No tests found for ${{ matrix.service }}, creating placeholder"
+            mkdir -p ./coverage
+            echo "No tests executed for ${{ matrix.service }}" > ./coverage/test-results.txt
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/coverage.xml
+          flags: ${{ matrix.service }}
+          name: codecov-${{ matrix.service }}
+
+  build-and-push-images:
+    name: Build & Push Container Images
+    needs: [determine-strategy, code-quality, test-microservices]
+    if: needs.determine-strategy.outputs.build-images == 'true'
+    strategy:
+      matrix:
+        service: [agents, cache, chat, identity, knowledge, orchestration, providers, react]
+      fail-fast: false
+
+    uses: ./.github/workflows/reusable/build-service.yml
+    with:
+      service-name: ${{ matrix.service }}
+      registry: ${{ env.REGISTRY }}
+      image-name: ${{ env.IMAGE_NAME }}
+      push-image: ${{ needs.determine-strategy.outputs.push-images == 'true' }}
+      run-tests: false  # Tests already run in previous job
+
+  update-gitops-manifests:
+    name: Update GitOps Manifests
+    runs-on: ubuntu-latest
+    needs: [determine-strategy, build-and-push-images]
+    if: needs.determine-strategy.outputs.push-images == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/'))
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Update image tags in ArgoCD manifests
+        run: |
+          # Determine environment and files to update
+          VERSION_TAG="${{ needs.determine-strategy.outputs.version-tag }}"
+          ENVIRONMENT="${{ needs.determine-strategy.outputs.environment }}"
+
+          echo "Updating $ENVIRONMENT environment with tag: $VERSION_TAG"
+
+          # Update image tags in kustomization files for each service
+          for service in agents cache chat identity knowledge orchestration providers react; do
+            ENV_PATH="infrastructure/argocd/environments"
+
+            if [ "$ENVIRONMENT" = "production" ]; then
+              KUSTOMIZE_PATH="$ENV_PATH/production"
+            elif [ "$ENVIRONMENT" = "development" ]; then
+              KUSTOMIZE_PATH="$ENV_PATH/development"
+            elif [ "$ENVIRONMENT" = "staging" ]; then
+              KUSTOMIZE_PATH="$ENV_PATH/staging"
+            fi
+
+            # Update image tag in deployment files if they exist
+            if [ -f "$KUSTOMIZE_PATH/microservices/$service/deployment.yaml" ]; then
+              sed -i "s|image: ghcr.io/.*-$service:.*|image: ghcr.io/${{ github.repository }}-$service:$VERSION_TAG|g" "$KUSTOMIZE_PATH/microservices/$service/deployment.yaml"
+            fi
+          done
+
+      - name: Commit and push changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            git add infrastructure/argocd/environments/
+            git commit -m "chore: update ${{ needs.determine-strategy.outputs.environment }} image tags to ${{ needs.determine-strategy.outputs.version-tag }}"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+
+  notify-deployment:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [determine-strategy, build-and-push-images, update-gitops-manifests]
+    if: always() && needs.determine-strategy.outputs.push-images == 'true'
+
+    steps:
+      - name: Deployment Success Notification
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            ✅ **MaestroAI CI Pipeline Successful**
+
+            **Environment:** ${{ needs.determine-strategy.outputs.environment }}
+            **Version:** ${{ needs.determine-strategy.outputs.version-tag }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+
+            Images built and manifests updated! ArgoCD will handle deployment.
+
+      - name: Deployment Failure Notification
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            ❌ **MaestroAI CI Pipeline Failed**
+
+            **Environment:** ${{ needs.determine-strategy.outputs.environment }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+
+            Please check the workflow logs for details.
