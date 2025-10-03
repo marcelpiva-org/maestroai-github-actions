@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+
+# =====================================================
+# BRANCH PROTECTION - Must run FIRST
+# =====================================================
+# ANSI color codes
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Read push details from stdin
+while read local_ref local_sha remote_ref remote_sha
+do
+    # Extract branch name from ref (e.g., refs/heads/main -> main)
+    branch_name=$(echo "$remote_ref" | sed 's|refs/heads/||')
+
+    # Check if pushing to protected branches
+    if [ "$branch_name" = "main" ] || [ "$branch_name" = "develop" ]; then
+        echo ""
+        echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║                   ⛔ PUSH BLOCKED                              ║${NC}"
+        echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}Direct pushes to ${RED}${branch_name}${YELLOW} branch are not allowed.${NC}"
+        echo ""
+        echo -e "${BLUE}📋 Git Flow Process:${NC}"
+        echo -e "   1. Create a feature branch:    ${GREEN}git checkout -b feature/my-feature${NC}"
+        echo -e "   2. Commit your changes:         ${GREEN}git commit -m \"feat: my feature\"${NC}"
+        echo -e "   3. Push feature branch:         ${GREEN}git push origin feature/my-feature${NC}"
+        echo -e "   4. Create Pull Request on GitHub"
+        echo -e "   5. Merge PR after review"
+        echo ""
+        echo -e "${BLUE}📚 Documentation:${NC}"
+        echo -e "   • Git Flow:           docs/GIT-FLOW.md"
+        echo -e "   • Conventional Commits: docs/CONVENTIONAL-COMMITS.md"
+        echo ""
+        echo -e "${YELLOW}💡 If you need to force push (emergency only):${NC}"
+        echo -e "   ${RED}git push --no-verify origin ${branch_name}${NC}"
+        echo ""
+
+        exit 1
+    fi
+done
+
+# =====================================================
+# VERSION MANAGEMENT & DOCUMENTATION CHECKS
+# =====================================================
+
+# VERSION MANAGEMENT & for version management and final documentation checks
+echo "🚀 Running pre-push version management checks..."
+
+# Function to check if version should be updated before push
+check_version_consistency() {
+  local current_version=$(grep -o '<VersionPrefix>[^<]*' src/Directory.Build.props | cut -d'>' -f2 2>/dev/null || echo "1.0.0")
+  local last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+  local last_tag_version=${last_tag#v}
+
+  echo "📊 Version Status:"
+  echo "  Current: $current_version"
+  echo "  Last Tag: $last_tag_version"
+
+  # Check if there are commits since last tag that might need version bump
+  local commits_since_tag=$(git rev-list ${last_tag}..HEAD --count 2>/dev/null || git rev-list HEAD --count)
+
+  if [ "$commits_since_tag" -gt 0 ]; then
+    echo "  Commits since last tag: $commits_since_tag"
+
+    # Check for version bump indicators in recent commits
+    local breaking_changes=$(git log ${last_tag}..HEAD --oneline 2>/dev/null | grep -E "(BREAKING|!):" | wc -l | tr -d ' \n' || echo "0")
+    local features=$(git log ${last_tag}..HEAD --oneline 2>/dev/null | grep "^[a-f0-9]* feat" | wc -l | tr -d ' \n' || echo "0")
+    local fixes=$(git log ${last_tag}..HEAD --oneline 2>/dev/null | grep "^[a-f0-9]* fix" | wc -l | tr -d ' \n' || echo "0")
+
+    echo "  Breaking changes: $breaking_changes"
+    echo "  New features: $features"
+    echo "  Bug fixes: $fixes"
+
+    # Suggest version updates
+    if [ "$breaking_changes" -gt 0 ]; then
+      echo "⚠️  Consider major version bump for breaking changes"
+    elif [ "$features" -gt 0 ]; then
+      echo "💡 Consider minor version bump for new features"
+    elif [ "$fixes" -gt 0 ]; then
+      echo "🔧 Consider patch version bump for bug fixes"
+    fi
+  fi
+}
+
+# Function to validate documentation is up to date
+validate_documentation() {
+  echo "📚 Validating documentation..."
+
+  # Check if README mentions all packages
+  if [ -f README.md ]; then
+    for project_dir in src/MaestroAI.Cache.*/; do
+      if [ -d "$project_dir" ]; then
+        local package_name=$(basename "$project_dir")
+        if ! grep -q "$package_name" README.md; then
+          echo "⚠️  Package $package_name not mentioned in README.md"
+        fi
+      fi
+    done
+  fi
+
+  # Check if CHANGELOG has unreleased entries
+  if [ -f CHANGELOG.md ]; then
+    if ! grep -A 10 "## \[Unreleased\]" CHANGELOG.md | grep -q "### "; then
+      echo "💡 No entries in CHANGELOG.md Unreleased section"
+    fi
+  fi
+
+  echo "✅ Documentation validation completed"
+}
+
+# Function to check if packages can be built
+validate_build() {
+  echo "🔨 Validating that packages can be built..."
+
+  # Try to restore and build using solution file
+  if ! dotnet restore src/MaestroAI.Gateway.sln --verbosity quiet; then
+    echo "❌ Failed to restore packages"
+    exit 1
+  fi
+
+  if ! dotnet build src/MaestroAI.Gateway.sln --no-restore --verbosity quiet; then
+    echo "❌ Failed to build packages"
+    exit 1
+  fi
+
+  echo "✅ All packages build successfully"
+}
+
+# Run all checks
+check_version_consistency
+validate_documentation
+validate_build
+
+echo "🎉 Pre-push checks completed successfully!"

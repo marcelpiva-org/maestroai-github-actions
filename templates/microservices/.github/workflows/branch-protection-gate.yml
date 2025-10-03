@@ -1,0 +1,15 @@
+name: Branch Protection
+
+# Calls the centralized reusable workflow for branch protection
+# See: marcelpiva-org/maestroai-github-actions
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  protection:
+    name: Enforce PR-only workflow
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/branch-protection-gate.yml@main

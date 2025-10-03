@@ -1,0 +1,34 @@
+# CI Heavy - Release/Main/Hotfix Branches
+# Duration: 30-60 minutes
+# Triggers: release/*, main, hotfix/*
+
+name: CI Heavy
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+      - 'hotfix/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-heavy:
+    name: 🎯 CI Heavy
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-heavy.yml@main
+    with:
+      service_name: gateway
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_performance_tests: false  # TODO: Set to true when ready
+      enable_load_tests: false         # TODO: Set to true when ready
+      enable_e2e_tests: false          # TODO: Set to true when ready
+      deploy_to_staging: true
+      deploy_to_production: true
+      enable_semantic_release: true
+      registry: 'ghcr.io'
+    secrets: inherit

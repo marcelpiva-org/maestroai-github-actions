@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Post-commit hook to automatically update documentation
+# This hook runs after each successful commit
+
+echo "🔄 Running post-commit documentation updates..."
+
+# Function to update README based on project changes
+update_readme() {
+  local updated=false
+
+  # Check if any .csproj files were modified in the last commit
+  if git diff HEAD~1 HEAD --name-only | grep -q "\.csproj$"; then
+    echo "📦 .csproj files changed, updating package information in README..."
+
+    # Extract version from Directory.Build.props
+    local version=$(grep -o '<VersionPrefix>[^<]*' Directory.Build.props | cut -d'>' -f2 || echo "1.0.0")
+
+    # Update badge versions in README (this is a placeholder - you might want to customize)
+    if [ -f README.md ]; then
+      # Update version badges (if they exist)
+      sed -i.bak "s/version-[0-9.]*/version-${version}/g" README.md 2>/dev/null || true
+      rm -f README.md.bak
+      updated=true
+    fi
+  fi
+
+  # Check if any source files were added/removed
+  if git diff HEAD~1 HEAD --name-only | grep -q "\.cs$"; then
+    echo "📝 Source files changed, checking for structural updates needed..."
+
+    # Count source files per project
+    for project_dir in src/MaestroAI.Gateway.*/; do
+      if [ -d "$project_dir" ]; then
+        local cs_count=$(find "$project_dir" -name "*.cs" ! -path "*/obj/*" ! -path "*/bin/*" | wc -l)
+        echo "  $project_dir: $cs_count source files"
+      fi
+    done
+
+    updated=true
+  fi
+
+  if [ "$updated" = true ]; then
+    echo "✅ README analysis completed"
+  fi
+}
+
+# Function to update CHANGELOG commit hash after commit
+update_changelog_hash() {
+  local commit_msg=$(git log -1 --pretty=format:"%s")
+  local commit_hash=$(git rev-parse --short HEAD)
+  local author=$(git log -1 --pretty=format:"%an")
+
+  echo "📋 Updating CHANGELOG with commit hash..."
+
+  # Update the (pending) entry with actual commit hash
+  if [ -f CHANGELOG.md ]; then
+    # Replace the most recent (pending) entry with actual commit hash
+    sed -i.bak "s/- ${commit_msg} (pending) - ${author}/- ${commit_msg} (${commit_hash}) - ${author}/" CHANGELOG.md 2>/dev/null || true
+    rm -f CHANGELOG.md.bak
+    echo "✅ CHANGELOG updated with commit hash: $commit_hash"
+  fi
+}
+
+# Run the updates
+update_readme
+update_changelog_hash
+
+echo "✨ Post-commit documentation updates completed!"

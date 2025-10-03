@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-commit hook for MaestroAI Cache
+# Install with: git config core.hooksPath .githooks
+
+echo "🔍 Running pre-commit checks..."
+
+# Check if we can build the solution
+if [ -f "src/MaestroAI.Gateway.sln" ]; then
+  echo "🔨 Validating build..."
+  if ! dotnet build src/MaestroAI.[A-Za-z]*.sln --verbosity quiet; then
+    echo "❌ Build failed. Please fix build errors before committing."
+    exit 1
+  fi
+  echo "✅ Build validation passed"
+fi
+
+# Check for common issues
+echo "📝 Checking for common issues..."
+
+# Check if Directory.Build.props is in the right location
+if [ ! -f "src/Directory.Build.props" ]; then
+  echo "⚠️  Directory.Build.props not found in src/ directory"
+fi
+
+# Function to update CHANGELOG before commit
+update_changelog() {
+  local commit_msg=""
+
+  # Try to get commit message from different sources
+  if [ -f .git/COMMIT_EDITMSG ]; then
+    commit_msg=$(head -1 .git/COMMIT_EDITMSG)
+  elif [ -n "${COMMIT_MSG:-}" ]; then
+    commit_msg="$COMMIT_MSG"
+  else
+    # If no commit message available yet, skip CHANGELOG update
+    echo "📋 Skipping CHANGELOG update (commit message not available yet)"
+    return 0
+  fi
+
+  # Skip if commit message is empty or just whitespace
+  if [[ -z "$commit_msg" || "$commit_msg" =~ ^[[:space:]]*$ ]]; then
+    echo "📋 Skipping CHANGELOG update (empty commit message)"
+    return 0
+  fi
+
+  echo "📋 Updating CHANGELOG..."
+
+  # Create CHANGELOG.md if it doesn't exist
+  if [ ! -f CHANGELOG.md ]; then
+    cat > CHANGELOG.md << 'EOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+EOF
+  fi
+
+  # Parse commit type from conventional commit
+  local commit_type="misc"
+  local commit_scope=""
+  local commit_description="$commit_msg"
+
+  if [[ "$commit_msg" =~ ^([a-z]+): ]]; then
+    commit_type="${BASH_REMATCH[1]}"
+    commit_description="${commit_msg#*: }"
+  fi
+
+  # Map commit types to changelog sections
+  local section=""
+  case "$commit_type" in
+    feat) section="### Added" ;;
+    fix) section="### Fixed" ;;
+    docs) section="### Documentation" ;;
+    style) section="### Changed" ;;
+    refactor) section="### Changed" ;;
+    perf) section="### Performance" ;;
+    test) section="### Testing" ;;
+    build|ci|chore) section="### Infrastructure" ;;
+    *) section="### Changed" ;;
+  esac
+
+  # Add entry to CHANGELOG
+  local temp_file=$(mktemp)
+  local inserted=false
+
+  while IFS= read -r line; do
+    echo "$line" >> "$temp_file"
+
+    # Insert after "## [Unreleased]" section
+    if [[ "$line" == "## [Unreleased]" ]] && [ "$inserted" = false ]; then
+      echo "" >> "$temp_file"
+      echo "$section" >> "$temp_file"
+      echo "- ${commit_description} (pending) - $(git config user.name || echo 'unknown')" >> "$temp_file"
+      inserted=true
+    fi
+  done < CHANGELOG.md
+
+  mv "$temp_file" CHANGELOG.md
+
+  # Add CHANGELOG.md to the current commit
+  git add CHANGELOG.md
+
+  echo "✅ CHANGELOG updated with: $commit_description"
+}
+
+# Function to check if version should be updated
+check_version_update() {
+  local commit_msg=""
+
+  # Try to get commit message from different sources
+  if [ -f .git/COMMIT_EDITMSG ]; then
+    commit_msg=$(head -1 .git/COMMIT_EDITMSG)
+  elif [ -n "${COMMIT_MSG:-}" ]; then
+    commit_msg="$COMMIT_MSG"
+  else
+    return 0
+  fi
+
+  # Check for breaking changes or version bump indicators
+  if [[ "$commit_msg" =~ !: || "$commit_msg" =~ BREAKING\ CHANGE ]]; then
+    echo "🚨 Breaking change detected! Consider updating major version."
+  elif [[ "$commit_msg" =~ ^feat ]]; then
+    echo "✨ New feature detected! Consider updating minor version."
+  elif [[ "$commit_msg" =~ ^fix ]]; then
+    echo "🐛 Bug fix detected! Consider updating patch version."
+  fi
+}
+
+# Run CHANGELOG update
+update_changelog
+check_version_update
+
+echo "✅ Pre-commit checks completed successfully"
+

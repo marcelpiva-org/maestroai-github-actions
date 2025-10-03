@@ -1,0 +1,29 @@
+# CI Complete - Develop Branch
+# Duration: 15-20 minutes
+# Triggers: develop
+
+name: CI Complete
+
+on:
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-complete:
+    name: 🔧 CI Complete
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-complete.yml@main
+    with:
+      service_name: gateway
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      has_integration_tests: false  # TODO: Set to true when ready
+      enable_contract_tests: false  # TODO: Set to true when ready
+      deploy_to_dev: true
+      registry: 'ghcr.io'
+    secrets: inherit

@@ -1,0 +1,32 @@
+# CI Fast - Feature/Fix Branches + PRs
+# Duration: 4-6 minutes
+# Triggers: feature/*, fix/*, pull_request
+
+name: CI Fast
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-fast:
+    name: ⚡ CI Fast
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-ci-fast.yml@main
+    with:
+      service_name: gateway
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: true
+      enable_preview: true
+      registry: 'ghcr.io'
+    secrets: inherit
