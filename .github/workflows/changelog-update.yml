@@ -1,0 +1,167 @@
+name: Update CHANGELOG
+
+on:
+  workflow_call:
+    inputs:
+      changelog_path:
+        description: 'Path to CHANGELOG.md file'
+        type: string
+        default: 'CHANGELOG.md'
+      commit_user:
+        description: 'Git commit user name'
+        type: string
+        default: 'github-actions[bot]'
+      commit_email:
+        description: 'Git commit user email'
+        type: string
+        default: 'github-actions[bot]@users.noreply.github.com'
+
+jobs:
+  update-changelog:
+    name: 📋 Update CHANGELOG
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for changelog generation
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📋 Generate CHANGELOG
+        id: changelog
+        run: |
+          #!/bin/bash
+          set -e
+
+          CHANGELOG_FILE="${{ inputs.changelog_path }}"
+
+          # Get the latest commit details
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+          COMMIT_DATE=$(git log -1 --pretty=format:"%Y-%m-%d")
+
+          # Create CHANGELOG.md if it doesn't exist
+          if [ ! -f "$CHANGELOG_FILE" ]; then
+            cat > "$CHANGELOG_FILE" << 'EOF'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          ## [Unreleased]
+
+          EOF
+            echo "changelog_created=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Parse conventional commit
+          COMMIT_TYPE="misc"
+          COMMIT_SCOPE=""
+          COMMIT_DESC="$COMMIT_MSG"
+
+          # Extract type and description from conventional commit format
+          if [[ "$COMMIT_MSG" =~ ^([a-z]+)(\([a-z0-9-]+\))?!?:\ (.+)$ ]]; then
+            COMMIT_TYPE="${BASH_REMATCH[1]}"
+            COMMIT_SCOPE="${BASH_REMATCH[2]}"
+            COMMIT_DESC="${BASH_REMATCH[3]}"
+          fi
+
+          # Map commit types to changelog sections
+          case "$COMMIT_TYPE" in
+            feat)     SECTION="### Added" ;;
+            fix)      SECTION="### Fixed" ;;
+            docs)     SECTION="### Documentation" ;;
+            style)    SECTION="### Changed" ;;
+            refactor) SECTION="### Changed" ;;
+            perf)     SECTION="### Performance" ;;
+            test)     SECTION="### Testing" ;;
+            build|ci|chore) SECTION="### Infrastructure" ;;
+            *)        SECTION="### Changed" ;;
+          esac
+
+          # Check if this commit is already in CHANGELOG
+          if grep -q "($COMMIT_HASH)" "$CHANGELOG_FILE"; then
+            echo "⏭️  Commit $COMMIT_HASH already in CHANGELOG, skipping"
+            echo "changelog_updated=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Insert entry into CHANGELOG
+          TEMP_FILE=$(mktemp)
+          INSERTED=false
+          SECTION_EXISTS=false
+
+          while IFS= read -r line; do
+            echo "$line" >> "$TEMP_FILE"
+
+            # Check if we're after "## [Unreleased]" section
+            if [[ "$line" == "## [Unreleased]" ]] && [ "$INSERTED" = false ]; then
+              echo "" >> "$TEMP_FILE"
+
+              # Check if section exists in the next few lines
+              NEXT_LINES=$(grep -A 10 "## \[Unreleased\]" "$CHANGELOG_FILE" || true)
+              if echo "$NEXT_LINES" | grep -q "^$SECTION$"; then
+                SECTION_EXISTS=true
+              else
+                # Add section header if it doesn't exist
+                echo "$SECTION" >> "$TEMP_FILE"
+              fi
+
+              # Add the entry
+              echo "- ${COMMIT_DESC} (${COMMIT_HASH}) - ${COMMIT_AUTHOR}" >> "$TEMP_FILE"
+              INSERTED=true
+            fi
+          done < "$CHANGELOG_FILE"
+
+          mv "$TEMP_FILE" "$CHANGELOG_FILE"
+
+          echo "changelog_updated=true" >> $GITHUB_OUTPUT
+          echo "commit_type=$COMMIT_TYPE" >> $GITHUB_OUTPUT
+          echo "commit_desc=$COMMIT_DESC" >> $GITHUB_OUTPUT
+
+          echo "✅ CHANGELOG updated with: $COMMIT_DESC"
+
+      - name: 💾 Commit CHANGELOG changes
+        if: steps.changelog.outputs.changelog_updated == 'true'
+        run: |
+          git config --local user.name "${{ inputs.commit_user }}"
+          git config --local user.email "${{ inputs.commit_email }}"
+
+          git add ${{ inputs.changelog_path }}
+
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "📝 No changes to commit"
+          else
+            git commit -m "docs(changelog): update with ${{ steps.changelog.outputs.commit_type }} - ${{ steps.changelog.outputs.commit_desc }}
+
+          Automatically updated CHANGELOG.md via GitHub Actions.
+
+          🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+            git push
+            echo "✅ CHANGELOG committed and pushed"
+          fi
+
+      - name: 📊 Summary
+        run: |
+          echo "### 📋 CHANGELOG Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.changelog.outputs.changelog_updated }}" == "true" ]; then
+            echo "✅ **Status**: CHANGELOG updated successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Entry added**:" >> $GITHUB_STEP_SUMMARY
+            echo "- Type: \`${{ steps.changelog.outputs.commit_type }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Description: ${{ steps.changelog.outputs.commit_desc }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Status**: No CHANGELOG update needed" >> $GITHUB_STEP_SUMMARY
+          fi

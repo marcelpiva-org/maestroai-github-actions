@@ -1,0 +1,37 @@
+name: Auto-Update CHANGELOG
+
+# This workflow automatically updates CHANGELOG.md after every push to main/develop
+# It extracts commit information and adds entries to the Unreleased section
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - 'CHANGELOG.md'  # Prevent infinite loops
+
+jobs:
+  update-changelog:
+    # Don't run if commit message contains [skip changelog]
+    if: "!contains(github.event.head_commit.message, '[skip changelog]')"
+
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/changelog-update.yml@main
+    with:
+      changelog_path: 'CHANGELOG.md'
+      commit_user: 'github-actions[bot]'
+      commit_email: 'github-actions[bot]@users.noreply.github.com'
+    secrets: inherit
+
+# Usage:
+# 1. Copy this file to .github/workflows/changelog.yml
+# 2. Commit and push to GitHub
+# 3. CHANGELOG.md will be automatically updated after every commit to main/develop
+#
+# How it works:
+# - Parses conventional commit messages (feat:, fix:, docs:, etc.)
+# - Adds entries to appropriate sections (Added, Fixed, Documentation, etc.)
+# - Commits and pushes changes back to the repository
+#
+# To skip CHANGELOG update for a specific commit:
+# git commit -m "your message [skip changelog]"
