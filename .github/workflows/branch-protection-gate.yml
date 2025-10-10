@@ -28,7 +28,7 @@ permissions:
 jobs:
   enforce-pr-only:
     name: Enforce Pull Request Workflow
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Check if push is from PR merge
         id: check_pr

@@ -39,7 +39,7 @@ permissions:
 jobs:
   check-tier:
     name: Check GitHub Tier
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       is-paid: ${{ steps.check.outputs.is_paid }}
     steps:
@@ -65,7 +65,7 @@ jobs:
 
   analyze:
     name: CodeQL Analysis (${{ inputs.language }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: check-tier
     if: needs.check-tier.outputs.is-paid == 'true'
     timeout-minutes: 30

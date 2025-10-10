@@ -54,7 +54,7 @@ jobs:
   # ========================================
   setup-and-lint:
     name: 🔧 Setup & Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       cache-hit: ${{ steps.setup.outputs.cache-hit }}
       tag: ${{ steps.tag.outputs.tag }}
@@ -95,7 +95,7 @@ jobs:
   # ========================================
   build:
     name: 🏗️ Build (AMD64)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [setup-and-lint]
 
     steps:
@@ -131,7 +131,7 @@ jobs:
   # ========================================
   unit-tests:
     name: 🧪 Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [setup-and-lint]
     if: ${{ inputs.has_tests }}
 
@@ -168,7 +168,7 @@ jobs:
   # ========================================
   security-scan-basic:
     name: 🔒 Security Scan (Basic)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [setup-and-lint]
 
     steps:
@@ -206,7 +206,7 @@ jobs:
   # ========================================
   build-preview-container:
     name: 🐳 Build Preview Container
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [setup-and-lint, build, unit-tests, security-scan-basic]
     if: ${{ inputs.enable_preview }}
 
@@ -252,7 +252,7 @@ jobs:
   # ========================================
   pr-comment-summary:
     name: 💬 PR Comment Summary
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [setup-and-lint, build, unit-tests, security-scan-basic, build-preview-container]
     if: always() && github.event_name == 'pull_request'
     permissions:

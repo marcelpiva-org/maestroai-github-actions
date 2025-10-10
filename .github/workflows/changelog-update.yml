@@ -19,7 +19,7 @@ on:
 jobs:
   update-changelog:
     name: 📋 Update CHANGELOG
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     permissions:
       contents: write
