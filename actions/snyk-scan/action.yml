@@ -1,0 +1,146 @@
+name: 'Snyk Dependency Scan for .NET'
+description: 'Scan .NET NuGet dependencies for known vulnerabilities using Snyk'
+
+inputs:
+  snyk_token:
+    description: 'Snyk authentication token'
+    required: true
+  dotnet_version:
+    description: '.NET SDK version'
+    required: false
+    default: '8.0'
+  solution_path:
+    description: 'Path to .NET solution or project'
+    required: false
+    default: 'src'
+  severity_threshold:
+    description: 'Minimum severity to report (low|medium|high|critical)'
+    required: false
+    default: 'high'
+  fail_on_issues:
+    description: 'Fail the build if vulnerabilities are found'
+    required: false
+    default: 'false'
+  upload_sarif:
+    description: 'Upload SARIF to GitHub Security tab (requires Advanced Security)'
+    required: false
+    default: 'false'
+  skip_analysis:
+    description: 'Skip analysis (for testing)'
+    required: false
+    default: 'false'
+
+outputs:
+  vulnerabilities_found:
+    description: 'Whether vulnerabilities were found (true/false)'
+    value: ${{ steps.snyk-test.outputs.vulnerabilities_found }}
+  sarif_uploaded:
+    description: 'Whether SARIF was uploaded (true/false)'
+    value: ${{ steps.upload-sarif.outputs.uploaded }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🔍 Check if Snyk analysis should run
+      id: check-skip
+      shell: bash
+      run: |
+        if [[ "${{ inputs.skip_analysis }}" == "true" ]]; then
+          echo "⏭️  Skipping Snyk analysis (skip_analysis=true)"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🔧 Setup .NET SDK
+      if: steps.check-skip.outputs.skip == 'false'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
+    - name: 🔄 Restore Dependencies
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "🔄 Restoring NuGet packages..."
+        dotnet restore ${{ inputs.solution_path }}
+        echo "✅ Dependencies restored"
+
+    - name: 🐍 Setup Snyk
+      if: steps.check-skip.outputs.skip == 'false'
+      uses: snyk/actions/setup@master
+
+    - name: 🔒 Run Snyk Dependency Scan
+      if: steps.check-skip.outputs.skip == 'false'
+      id: snyk-test
+      continue-on-error: true
+      uses: snyk/actions/dotnet@master
+      env:
+        SNYK_TOKEN: ${{ inputs.snyk_token }}
+      with:
+        args: >-
+          --severity-threshold=${{ inputs.severity_threshold }}
+          --all-projects
+          ${{ inputs.upload_sarif == 'true' && '--sarif-file-output=snyk.sarif' || '' }}
+
+    - name: 📊 Parse Snyk Results
+      if: steps.check-skip.outputs.skip == 'false'
+      id: parse-results
+      shell: bash
+      run: |
+        if [[ "${{ steps.snyk-test.outcome }}" == "failure" ]]; then
+          echo "vulnerabilities_found=true" >> $GITHUB_OUTPUT
+          echo "⚠️  Vulnerabilities found!"
+        else
+          echo "vulnerabilities_found=false" >> $GITHUB_OUTPUT
+          echo "✅ No vulnerabilities found"
+        fi
+
+    - name: 📤 Upload SARIF to GitHub Security
+      if: steps.check-skip.outputs.skip == 'false' && inputs.upload_sarif == 'true'
+      id: upload-sarif
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: snyk.sarif
+
+    - name: 📊 Display Results
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "📊 Snyk Dependency Scan Complete"
+        echo ""
+        echo "🔍 Severity Threshold: ${{ inputs.severity_threshold }}"
+        echo "📦 Solution Path: ${{ inputs.solution_path }}"
+
+        if [[ "${{ steps.snyk-test.outcome }}" == "failure" ]]; then
+          echo ""
+          echo "⚠️  VULNERABILITIES FOUND"
+          echo "ℹ️  Check the workflow logs for details"
+
+          if [[ "${{ inputs.upload_sarif }}" == "true" ]]; then
+            echo "📋 SARIF report uploaded to GitHub Security tab"
+          fi
+
+          if [[ "${{ inputs.fail_on_issues }}" == "true" ]]; then
+            echo "❌ Failing build due to vulnerabilities (fail_on_issues=true)"
+            exit 1
+          else
+            echo "⚠️  Continuing despite vulnerabilities (fail_on_issues=false)"
+          fi
+        else
+          echo ""
+          echo "✅ NO VULNERABILITIES FOUND"
+          echo "🎉 All dependencies are secure!"
+        fi
+
+    - name: ⏭️ Skipped Analysis
+      if: steps.check-skip.outputs.skip == 'true'
+      shell: bash
+      run: |
+        echo "⏭️  Snyk analysis was skipped"
+        echo "ℹ️  To enable, set skip_analysis=false"
+
+branding:
+  icon: 'shield'
+  color: 'purple'

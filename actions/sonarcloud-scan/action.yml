@@ -1,0 +1,153 @@
+name: 'SonarCloud Scan for .NET'
+description: 'Run SonarCloud SAST analysis on .NET projects with code quality and security insights'
+
+inputs:
+  sonar_token:
+    description: 'SonarCloud authentication token'
+    required: true
+  sonar_organization:
+    description: 'SonarCloud organization name'
+    required: true
+  sonar_project_key:
+    description: 'SonarCloud project key'
+    required: true
+  dotnet_version:
+    description: '.NET SDK version'
+    required: false
+    default: '8.0'
+  solution_path:
+    description: 'Path to .NET solution or project'
+    required: false
+    default: 'src'
+  coverage_exclusions:
+    description: 'Paths to exclude from coverage (comma-separated)'
+    required: false
+    default: '**/Program.cs,**/Startup.cs,**/*Tests/**'
+  skip_analysis:
+    description: 'Skip analysis (for testing)'
+    required: false
+    default: 'false'
+
+outputs:
+  quality_gate_status:
+    description: 'Quality Gate status (PASSED/FAILED/WARN/NONE)'
+    value: ${{ steps.sonar-end.outputs.quality_gate_status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🔍 Check if SonarCloud analysis should run
+      id: check-skip
+      shell: bash
+      run: |
+        if [[ "${{ inputs.skip_analysis }}" == "true" ]]; then
+          echo "⏭️  Skipping SonarCloud analysis (skip_analysis=true)"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🔧 Setup .NET SDK
+      if: steps.check-skip.outputs.skip == 'false'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
+    - name: 📦 Install SonarScanner for .NET
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "📦 Installing SonarScanner for .NET..."
+        dotnet tool install --global dotnet-sonarscanner --version 6.0.0 || dotnet tool update --global dotnet-sonarscanner
+        echo "✅ SonarScanner installed"
+
+    - name: 📦 Install Coverage Tools
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "📦 Installing dotnet-coverage..."
+        dotnet tool install --global dotnet-coverage || dotnet tool update --global dotnet-coverage
+        echo "✅ Coverage tools installed"
+
+    - name: 🔄 Restore Dependencies
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "🔄 Restoring NuGet packages..."
+        dotnet restore ${{ inputs.solution_path }}
+        echo "✅ Dependencies restored"
+
+    - name: 🚀 Begin SonarCloud Analysis
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+      run: |
+        echo "🚀 Starting SonarCloud analysis..."
+
+        dotnet sonarscanner begin \
+          /k:"${{ inputs.sonar_project_key }}" \
+          /o:"${{ inputs.sonar_organization }}" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.token="${SONAR_TOKEN}" \
+          /d:sonar.cs.vscoveragexml.reportsPaths="coverage.xml" \
+          /d:sonar.coverage.exclusions="${{ inputs.coverage_exclusions }}"
+
+        echo "✅ SonarCloud analysis initialized"
+
+    - name: 🏗️ Build Solution
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "🏗️ Building solution..."
+        dotnet build ${{ inputs.solution_path }} --configuration Release --no-restore
+        echo "✅ Build completed"
+
+    - name: 🧪 Run Tests with Coverage
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "🧪 Running tests with code coverage..."
+
+        dotnet-coverage collect \
+          "dotnet test ${{ inputs.solution_path }} --configuration Release --no-build --verbosity minimal" \
+          -f xml \
+          -o "coverage.xml"
+
+        echo "✅ Tests completed with coverage"
+
+    - name: 🏁 End SonarCloud Analysis
+      if: steps.check-skip.outputs.skip == 'false'
+      id: sonar-end
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+      run: |
+        echo "🏁 Finishing SonarCloud analysis..."
+
+        dotnet sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+
+        echo "✅ SonarCloud analysis completed"
+        echo "quality_gate_status=NONE" >> $GITHUB_OUTPUT
+
+    - name: 📊 Display Results
+      if: steps.check-skip.outputs.skip == 'false'
+      shell: bash
+      run: |
+        echo "📊 SonarCloud Analysis Complete"
+        echo ""
+        echo "🔗 View detailed results at:"
+        echo "   https://sonarcloud.io/project/overview?id=${{ inputs.sonar_project_key }}"
+        echo ""
+        echo "📈 Quality metrics will appear in ~1-2 minutes"
+
+    - name: ⏭️ Skipped Analysis
+      if: steps.check-skip.outputs.skip == 'true'
+      shell: bash
+      run: |
+        echo "⏭️  SonarCloud analysis was skipped"
+        echo "ℹ️  To enable, set skip_analysis=false"
+
+branding:
+  icon: 'shield'
+  color: 'orange'
