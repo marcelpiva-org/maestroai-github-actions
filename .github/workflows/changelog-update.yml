@@ -19,7 +19,7 @@ on:
 jobs:
   update-changelog:
     name: 📋 Update CHANGELOG
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: arc-runner-set
 
     permissions:
       contents: write
