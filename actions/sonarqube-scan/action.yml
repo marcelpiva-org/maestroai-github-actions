@@ -37,9 +37,19 @@ runs:
   using: composite
   steps:
     - name: 📥 Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ inputs.dotnet_version }}
+      shell: bash
+      run: |
+        # Install .NET in user directory (no root required)
+        if ! command -v dotnet &> /dev/null; then
+          echo "Installing .NET SDK ${{ inputs.dotnet_version }} in user directory..."
+          mkdir -p $HOME/.dotnet
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --install-dir $HOME/.dotnet --channel ${{ inputs.dotnet_version }}
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+        fi
+        echo "✅ .NET SDK version: $(dotnet --version)"
 
     - name: 🔧 Install SonarScanner for .NET
       shell: bash
