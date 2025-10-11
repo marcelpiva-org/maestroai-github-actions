@@ -206,7 +206,7 @@ jobs:
   # ========================================
   build-preview-container:
     name: 🐳 Build Preview Container
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest  # Use GitHub-hosted for Docker builds (TLS timeout workaround)
     needs: [setup-and-lint, build, unit-tests, security-scan-basic]
     if: ${{ inputs.enable_preview }}
 
