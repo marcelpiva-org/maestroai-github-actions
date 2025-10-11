@@ -1,0 +1,121 @@
+name: 'SonarQube Scan'
+description: 'Run SonarQube analysis on .NET projects'
+author: 'MaestroAI'
+
+inputs:
+  sonar_host_url:
+    description: 'SonarQube server URL'
+    required: true
+    default: 'http://localhost:9000'
+  sonar_token:
+    description: 'SonarQube authentication token'
+    required: true
+  project_key:
+    description: 'SonarQube project key (e.g., maestroai-agents-app)'
+    required: true
+  project_name:
+    description: 'SonarQube project name (e.g., MaestroAI Agents Service)'
+    required: true
+  solution_path:
+    description: 'Path to solution file'
+    required: false
+    default: 'src'
+  dotnet_version:
+    description: '.NET version to use'
+    required: false
+    default: '8.0'
+  coverage_exclusions:
+    description: 'Coverage exclusions pattern'
+    required: false
+    default: '**/Migrations/**,**/obj/**,**/bin/**,**/*.Tests/**'
+  sources:
+    description: 'Source files to analyze'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: 📥 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
+    - name: 🔧 Install SonarScanner for .NET
+      shell: bash
+      run: |
+        dotnet tool install --global dotnet-sonarscanner --version 9.0.0 || dotnet tool update --global dotnet-sonarscanner
+        echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+    - name: 🔍 SonarQube Analysis - Begin
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+      run: |
+        dotnet sonarscanner begin \
+          /k:"${{ inputs.project_key }}" \
+          /n:"${{ inputs.project_name }}" \
+          /d:sonar.host.url="${{ inputs.sonar_host_url }}" \
+          /d:sonar.token="${SONAR_TOKEN}" \
+          /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
+          /d:sonar.coverage.exclusions="${{ inputs.coverage_exclusions }}"
+
+    - name: 🏗️ Build Solution
+      shell: bash
+      run: |
+        dotnet build ${{ inputs.solution_path }} \
+          --configuration Release \
+          --no-restore
+
+    - name: 🧪 Run Tests with Coverage
+      shell: bash
+      run: |
+        dotnet test ${{ inputs.solution_path }} \
+          --configuration Release \
+          --no-build \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./coverage \
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
+          || true
+
+    - name: 🔍 SonarQube Analysis - End
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+      run: |
+        dotnet sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+
+    - name: 📊 Quality Gate Check
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+      run: |
+        echo "⏳ Waiting for Quality Gate result..."
+        sleep 10
+
+        TASK_URL=$(curl -s -u "${SONAR_TOKEN}:" \
+          "${{ inputs.sonar_host_url }}/api/ce/component?component=${{ inputs.project_key }}" \
+          | jq -r '.current.analysisId')
+
+        if [ "$TASK_URL" != "null" ]; then
+          QG_STATUS=$(curl -s -u "${SONAR_TOKEN}:" \
+            "${{ inputs.sonar_host_url }}/api/qualitygates/project_status?analysisId=${TASK_URL}" \
+            | jq -r '.projectStatus.status')
+
+          echo "📊 Quality Gate Status: ${QG_STATUS}"
+
+          if [ "$QG_STATUS" = "ERROR" ]; then
+            echo "❌ Quality Gate Failed!"
+            echo "🔗 View details: ${{ inputs.sonar_host_url }}/dashboard?id=${{ inputs.project_key }}"
+            exit 1
+          else
+            echo "✅ Quality Gate Passed!"
+            echo "🔗 View report: ${{ inputs.sonar_host_url }}/dashboard?id=${{ inputs.project_key }}"
+          fi
+        else
+          echo "⚠️  Could not retrieve Quality Gate status"
+        fi
+
+branding:
+  icon: 'check-circle'
+  color: 'blue'

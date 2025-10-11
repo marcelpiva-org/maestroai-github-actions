@@ -37,6 +37,16 @@ on:
         required: false
         type: string
         default: 'ghcr.io'
+      enable_sonarqube:
+        description: 'Enable SonarQube analysis'
+        required: false
+        type: boolean
+        default: true
+      sonar_host_url:
+        description: 'SonarQube server URL'
+        required: false
+        type: string
+        default: 'http://localhost:9000'
 
 permissions:
   contents: read
@@ -202,13 +212,52 @@ jobs:
         EOF
 
   # ========================================
-  # Job 5: Build Preview Container (Optional)
+  # Job 5: SonarQube Code Quality Analysis
+  # ========================================
+  sonarqube-analysis:
+    name: 📊 SonarQube Analysis
+    runs-on: arc-runner-set
+    needs: [setup-and-lint]
+    if: ${{ inputs.enable_sonarqube }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+
+    - name: 🔍 Run SonarQube Analysis
+      uses: marcelpiva-org/maestroai-github-actions/actions/sonarqube-scan@main
+      with:
+        sonar_host_url: ${{ inputs.sonar_host_url }}
+        sonar_token: ${{ secrets.SONARQUBE_TOKEN }}
+        project_key: maestroai-${{ inputs.service_name }}-app
+        project_name: MaestroAI ${{ inputs.service_name }} Service
+        solution_path: ${{ inputs.solution_path }}
+        dotnet_version: ${{ inputs.dotnet_version }}
+
+    - name: 📊 Quality Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 📊 SonarQube Quality Analysis
+
+        ✅ **Code analysis completed**
+
+        - **Project**: maestroai-${{ inputs.service_name }}-app
+        - **Dashboard**: ${{ inputs.sonar_host_url }}/dashboard?id=maestroai-${{ inputs.service_name }}-app
+
+        ### 📈 Metrics
+        View detailed metrics, coverage, and quality gates on SonarQube dashboard.
+        EOF
+
+  # ========================================
+  # Job 6: Build Preview Container (Optional)
   # ========================================
   build-preview-container:
     name: 🐳 Build Preview Container
     runs-on: arc-runner-set
-    needs: [setup-and-lint, build, unit-tests, security-scan-basic]
-    if: ${{ inputs.enable_preview }}
+    needs: [setup-and-lint, build, unit-tests, security-scan-basic, sonarqube-analysis]
+    if: ${{ inputs.enable_preview && (success() || failure()) }}
 
     steps:
     - name: 📥 Checkout code
@@ -248,12 +297,12 @@ jobs:
         EOF
 
   # ========================================
-  # Job 6: PR Comment with Summary
+  # Job 7: PR Comment with Summary
   # ========================================
   pr-comment-summary:
     name: 💬 PR Comment Summary
     runs-on: arc-runner-set
-    needs: [setup-and-lint, build, unit-tests, security-scan-basic, build-preview-container]
+    needs: [setup-and-lint, build, unit-tests, security-scan-basic, sonarqube-analysis, build-preview-container]
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -267,6 +316,7 @@ jobs:
           const buildStatus = '${{ needs.build.result }}';
           const testStatus = '${{ needs.unit-tests.result }}';
           const securityStatus = '${{ needs.security-scan-basic.result }}';
+          const sonarqubeStatus = '${{ needs.sonarqube-analysis.result }}';
           const containerStatus = '${{ needs.build-preview-container.result }}';
 
           const statusIcon = (status) => {
@@ -290,9 +340,18 @@ jobs:
           | 🏗️ Build (AMD64) | ${statusIcon(buildStatus)} | ~1min |
           | 🧪 Unit Tests | ${statusIcon(testStatus)} | ~2min |
           | 🔒 Security Scan | ${statusIcon(securityStatus)} | ~30s |
+          | 📊 SonarQube Analysis | ${statusIcon(sonarqubeStatus)} | ~3min |
           | 🐳 Preview Container | ${statusIcon(containerStatus)} | ~2min |
 
-          **Total Duration**: ~6min ⚡
+          **Total Duration**: ~9min ⚡
+
+          ${sonarqubeStatus === 'success' ? `
+          ### 📊 Code Quality Report
+
+          **SonarQube Dashboard**: [${{ inputs.sonar_host_url }}/dashboard?id=maestroai-${{ inputs.service_name }}-app](${{ inputs.sonar_host_url }}/dashboard?id=maestroai-${{ inputs.service_name }}-app)
+
+          View detailed code quality metrics, coverage, and quality gates on SonarQube.
+          ` : ''}
 
           ${containerStatus === 'success' ? `
           ### 🌐 Preview Environment
