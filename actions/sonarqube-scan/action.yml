@@ -62,6 +62,14 @@ runs:
       env:
         SONAR_TOKEN: ${{ inputs.sonar_token }}
       run: |
+        # Debug: Verify token is present (show only length, not value)
+        if [ -z "${SONAR_TOKEN}" ]; then
+          echo "❌ ERROR: SONAR_TOKEN is empty!"
+          echo "This usually means the secret was not passed correctly to the action."
+          exit 1
+        fi
+        echo "✅ Token received (length: ${#SONAR_TOKEN})"
+
         dotnet sonarscanner begin \
           /k:"${{ inputs.project_key }}" \
           /n:"${{ inputs.project_name }}" \
