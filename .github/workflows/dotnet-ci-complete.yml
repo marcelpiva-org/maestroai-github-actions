@@ -47,6 +47,16 @@ on:
         required: false
         type: string
         default: 'ghcr.io'
+      enable_sonarqube:
+        description: 'Enable SonarQube analysis'
+        required: false
+        type: boolean
+        default: true
+      sonar_host_url:
+        description: 'SonarQube server URL'
+        required: false
+        type: string
+        default: 'http://localhost:9000'
 
 permissions:
   contents: read
@@ -160,7 +170,51 @@ jobs:
         retention-days: 30
 
   # ========================================
-  # Job 4: Integration Tests (If Enabled)
+  # Job 4: SonarQube Code Quality Analysis
+  # ========================================
+  sonarqube-analysis:
+    name: 📊 SonarQube Analysis
+    runs-on: arc-runner-set
+    needs: [setup-dependencies]
+    if: ${{ inputs.enable_sonarqube }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+
+    - name: 🔍 Run SonarQube Analysis
+      uses: marcelpiva-org/maestroai-github-actions/actions/sonarqube-scan@main
+      with:
+        sonar_host_url: ${{ inputs.sonar_host_url }}
+        sonar_token: ${{ secrets.SONARQUBE_TOKEN }}
+        github_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+        project_key: maestroai-${{ inputs.service_name }}-app
+        project_name: MaestroAI ${{ inputs.service_name }} Service
+        solution_path: ${{ inputs.solution_path }}
+        dotnet_version: ${{ inputs.dotnet_version }}
+
+    - name: 📊 Quality Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 📊 SonarQube Quality Analysis
+
+        ✅ **Code analysis completed**
+
+        - **Project**: maestroai-${{ inputs.service_name }}-app
+        - **Dashboard**: ${{ inputs.sonar_host_url }}/dashboard?id=maestroai-${{ inputs.service_name }}-app
+
+        ### 📈 Metrics
+        View detailed metrics, coverage, and quality gates on SonarQube dashboard.
+        EOF
+
+  # ========================================
+  # Job 5: Integration Tests (If Enabled)
   # ========================================
   integration-tests:
     name: 🔗 Integration Tests
@@ -473,7 +527,7 @@ jobs:
   summary:
     name: 📊 Pipeline Summary
     runs-on: arc-runner-set
-    needs: [setup-dependencies, build-solution, unit-tests, integration-tests, create-manifest, trivy-scan, deploy-to-dev]
+    needs: [setup-dependencies, build-solution, unit-tests, sonarqube-analysis, integration-tests, create-manifest, trivy-scan, deploy-to-dev]
     if: always()
 
     steps:
@@ -493,6 +547,7 @@ jobs:
         | 🔧 Setup | ${{ needs.setup-dependencies.result == 'success' && '✅' || '❌' }} | ~30s |
         | 🏗️ Build | ${{ needs.build-solution.result == 'success' && '✅' || '❌' }} | ~1min |
         | 🧪 Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅' || '⏭️' }} | ~2min |
+        | 📊 SonarQube Analysis | ${{ needs.sonarqube-analysis.result == 'success' && '✅' || '⏭️' }} | ~1min |
         | 🔗 Integration Tests | ${{ needs.integration-tests.result == 'success' && '✅' || '⏭️' }} | ~3min |
         | 🐳 Containers (AMD64 + ARM64) | ${{ needs.create-manifest.result == 'success' && '✅' || '❌' }} | ~5min |
         | 🔒 Security Scan | ${{ needs.trivy-scan.result == 'success' && '✅' || '❌' }} | ~2min |
