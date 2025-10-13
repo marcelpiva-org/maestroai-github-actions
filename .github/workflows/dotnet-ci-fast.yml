@@ -79,7 +79,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 📏 Code Linting & Format Check
       run: |
@@ -117,7 +117,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🏗️ Build Solution
       uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
@@ -154,7 +154,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🧪 Run Unit Tests
       uses: marcelpiva-org/maestroai-github-actions/actions/test-dotnet@main
@@ -276,7 +276,7 @@ jobs:
         tag: ${{ needs.setup-and-lint.outputs.tag }}
         architecture: amd64
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
         registry_username: marcelpiva-org
 
     - name: 📊 Container Summary
