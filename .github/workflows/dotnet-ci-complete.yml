@@ -91,7 +91,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🏷️ Generate develop tags
       id: tag
@@ -123,7 +123,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🏗️ Build Solution
       uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
@@ -148,7 +148,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🧪 Run Unit Tests with Coverage
       run: |
@@ -256,7 +256,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🗄️ Run Database Migrations (Dry Run)
       run: |
@@ -304,7 +304,7 @@ jobs:
       with:
         dotnet_version: ${{ inputs.dotnet_version }}
         solution_path: ${{ inputs.solution_path }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 📜 Run Contract Tests (Pact)
       run: |
@@ -332,7 +332,7 @@ jobs:
         tag: ${{ needs.setup-dependencies.outputs.tag }}
         architecture: amd64
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
         registry_username: marcelpiva-org
 
   build-arm64:
@@ -352,7 +352,7 @@ jobs:
         tag: ${{ needs.setup-dependencies.outputs.tag }}
         architecture: arm64
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        packages_token: ${{ secrets.PACKAGES_TOKEN }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
         registry_username: marcelpiva-org
 
   # ========================================
@@ -468,7 +468,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: marcelpiva-org/maestroai-infrastructure
-        token: ${{ secrets.PACKAGES_TOKEN }}
+        token: ${{ secrets.NUGET_AUTH_TOKEN }}
         path: infrastructure
 
     - name: 📝 Update Dev deployment manifest
