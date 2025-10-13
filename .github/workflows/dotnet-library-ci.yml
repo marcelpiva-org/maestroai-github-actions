@@ -1,0 +1,327 @@
+name: .NET Library CI
+
+# Workflow CI/CD para bibliotecas .NET (NuGet packages)
+# Features: Lint, Build, Tests, SonarQube, Gitleaks, Package Publishing
+
+on:
+  workflow_call:
+    inputs:
+      library_name:
+        description: 'Library name (e.g., building-blocks, cache, database)'
+        required: true
+        type: string
+      dotnet_version:
+        description: '.NET version to use'
+        required: false
+        type: string
+        default: '8.0'
+      solution_path:
+        description: 'Path to solution file'
+        required: false
+        type: string
+        default: 'src'
+      has_tests:
+        description: 'Whether the library has tests'
+        required: false
+        type: boolean
+        default: false
+      enable_sonarqube:
+        description: 'Enable SonarQube analysis'
+        required: false
+        type: boolean
+        default: true
+      sonar_host_url:
+        description: 'SonarQube server URL'
+        required: false
+        type: string
+        default: 'http://172.19.0.7:9000'
+      publish_packages:
+        description: 'Publish NuGet packages after successful CI'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ========================================
+  # Job 1: Setup & Lint
+  # ========================================
+  setup-and-lint:
+    name: 🔧 Setup & Lint
+    runs-on: arc-runner-set
+    outputs:
+      cache-hit: ${{ steps.setup.outputs.cache-hit }}
+      version: ${{ steps.version.outputs.VERSION }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for versioning
+
+    - name: 🔧 Setup .NET Environment
+      id: setup
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+
+    - name: 🏷️ Determine version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION=1.0.$GITHUB_RUN_NUMBER-preview
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Package version: $VERSION"
+
+    - name: 📏 Code Linting & Format Check
+      run: |
+        echo "🔍 Checking code format..."
+        dotnet format ${{ inputs.solution_path }} --verify-no-changes --verbosity diagnostic || {
+          echo "❌ Code format issues found. Run 'dotnet format' locally."
+          exit 1
+        }
+
+  # ========================================
+  # Job 2: Build Solution
+  # ========================================
+  build:
+    name: 🏗️ Build Solution
+    runs-on: arc-runner-set
+    needs: [setup-and-lint]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+
+    - name: 🏗️ Build Solution
+      uses: marcelpiva-org/maestroai-github-actions/actions/build-dotnet@main
+      with:
+        solution_path: ${{ inputs.solution_path }}
+
+  # ========================================
+  # Job 3: Unit Tests (if enabled)
+  # ========================================
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: arc-runner-set
+    needs: [setup-and-lint]
+    if: ${{ inputs.has_tests }}
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+
+    - name: 🧪 Run Unit Tests with Coverage
+      run: |
+        echo "🧪 Running unit tests with coverage..."
+        dotnet test ${{ inputs.solution_path }} \
+          --configuration Release \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./coverage \
+          --logger "trx;LogFileName=test-results.trx"
+
+    - name: 📊 Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-${{ github.sha }}
+        path: ./coverage
+        retention-days: 30
+
+  # ========================================
+  # Job 4: SonarQube Code Quality Analysis
+  # ========================================
+  sonarqube-analysis:
+    name: 📊 SonarQube Analysis
+    runs-on: arc-runner-set
+    needs: [setup-and-lint]
+    if: ${{ inputs.enable_sonarqube }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+
+    - name: 🔍 Run SonarQube Analysis
+      uses: marcelpiva-org/maestroai-github-actions/actions/sonarqube-scan@main
+      with:
+        sonar_host_url: ${{ inputs.sonar_host_url }}
+        sonar_token: ${{ secrets.SONARQUBE_TOKEN }}
+        github_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+        project_key: maestroai-${{ inputs.library_name }}
+        project_name: MaestroAI ${{ inputs.library_name }} Library
+        solution_path: ${{ inputs.solution_path }}
+        dotnet_version: ${{ inputs.dotnet_version }}
+
+    - name: 📊 Quality Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 📊 SonarQube Quality Analysis
+
+        ✅ **Code analysis completed**
+
+        - **Project**: maestroai-${{ inputs.library_name }}
+        - **Dashboard**: ${{ inputs.sonar_host_url }}/dashboard?id=maestroai-${{ inputs.library_name }}
+
+        ### 📈 Metrics
+        View detailed metrics, coverage, and quality gates on SonarQube dashboard.
+        EOF
+
+  # ========================================
+  # Job 5: Security Scan (Gitleaks)
+  # ========================================
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: arc-runner-set
+    needs: [setup-and-lint]
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret detection
+
+    - name: 🔍 Run Gitleaks Secret Scan
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ========================================
+  # Job 6: Pack NuGet Packages
+  # ========================================
+  pack-packages:
+    name: 📦 Pack NuGet Packages
+    runs-on: arc-runner-set
+    needs: [setup-and-lint, build, unit-tests, sonarqube-analysis, security-scan]
+    if: always() && needs.build.result == 'success' && needs.security-scan.result == 'success'
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup .NET Environment
+      uses: marcelpiva-org/maestroai-github-actions/actions/setup-dotnet@main
+      with:
+        dotnet_version: ${{ inputs.dotnet_version }}
+        solution_path: ${{ inputs.solution_path }}
+        packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
+
+    - name: 📦 Pack NuGet Packages
+      run: |
+        echo "📦 Packing NuGet packages..."
+        dotnet pack ${{ inputs.solution_path }} \
+          -c Release \
+          --no-build \
+          -p:PackageVersion=${{ needs.setup-and-lint.outputs.version }} \
+          -o ./artifacts
+
+        echo "✅ Packages created:"
+        ls -lh ./artifacts/*.nupkg
+
+    - name: 📤 Upload Package Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-packages-${{ github.sha }}
+        path: ./artifacts/*.nupkg
+        retention-days: 90
+
+  # ========================================
+  # Job 7: Publish Packages (if enabled)
+  # ========================================
+  publish-packages:
+    name: 📤 Publish NuGet Packages
+    runs-on: arc-runner-set
+    needs: [setup-and-lint, pack-packages]
+    if: ${{ inputs.publish_packages && needs.pack-packages.result == 'success' }}
+
+    steps:
+    - name: 📥 Download Package Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-packages-${{ github.sha }}
+        path: ./artifacts
+
+    - name: 📤 Publish to GitHub Packages
+      env:
+        NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "📤 Publishing packages to GitHub Packages..."
+        for pkg in ./artifacts/*.nupkg; do
+          echo "Publishing: $(basename $pkg)"
+          dotnet nuget push "$pkg" \
+            --source "https://nuget.pkg.github.com/marcelpiva-org/index.json" \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --skip-duplicate
+        done
+        echo "✅ All packages published successfully"
+
+  # ========================================
+  # Job 8: Summary
+  # ========================================
+  summary:
+    name: 📊 Pipeline Summary
+    runs-on: arc-runner-set
+    needs: [setup-and-lint, build, unit-tests, sonarqube-analysis, security-scan, pack-packages, publish-packages]
+    if: always()
+
+    steps:
+    - name: 📊 Generate Summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🚀 Library CI Pipeline - maestroai-${{ inputs.library_name }}
+
+        **Version**: \`${{ needs.setup-and-lint.outputs.version }}\`
+        **Branch**: \`${{ github.ref_name }}\`
+
+        ### ✅ Pipeline Results
+
+        | Stage | Status | Duration |
+        |-------|--------|----------|
+        | 🔧 Setup & Lint | ${{ needs.setup-and-lint.result == 'success' && '✅' || '❌' }} | ~30s |
+        | 🏗️ Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} | ~1min |
+        | 🧪 Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅' || (inputs.has_tests && '❌' || '⏭️') }} | ~2min |
+        | 📊 SonarQube Analysis | ${{ needs.sonarqube-analysis.result == 'success' && '✅' || '⏭️' }} | ~1min |
+        | 🔒 Security Scan | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} | ~30s |
+        | 📦 Pack Packages | ${{ needs.pack-packages.result == 'success' && '✅' || '❌' }} | ~1min |
+        | 📤 Publish Packages | ${{ needs.publish-packages.result == 'success' && '✅' || '⏭️' }} | ~1min |
+
+        **Total Duration**: ~6-8min
+
+        ### 📦 NuGet Packages
+
+        **Version**: \`${{ needs.setup-and-lint.outputs.version }}\`
+        **Repository**: https://github.com/marcelpiva-org?tab=packages
+
+        ${{ needs.publish-packages.result == 'success' && '✅ **Packages published successfully**' || '⏭️ **Packages not published (publish_packages: false)**' }}
+
+        ---
+
+        <sub>🤖 Generated by Library CI Pipeline</sub>
+        EOF
