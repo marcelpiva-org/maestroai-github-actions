@@ -60,32 +60,35 @@ runs:
         dotnet tool install --global dotnet-sonarscanner --version 9.0.0 || dotnet tool update --global dotnet-sonarscanner
         echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
-    - name: 📦 Configure NuGet Authentication
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        # Configure GitHub Packages NuGet source with authentication
-        dotnet nuget add source https://nuget.pkg.github.com/marcelpiva-org/index.json \
-          --name github \
-          --username marcelpiva-org \
-          --password "${GITHUB_TOKEN}" \
-          --store-password-in-clear-text \
-          || echo "Source already exists or failed to add"
-
-    - name: 🔍 SonarQube Analysis - Begin
+    - name: 🔍 SonarQube Analysis (Complete)
       shell: bash
       env:
         SONAR_TOKEN: ${{ inputs.sonar_token }}
+        NUGET_AUTH_TOKEN: ${{ inputs.github_token }}
+        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials":[{"endpoint":"https://nuget.pkg.github.com/marcelpiva-org/index.json","username":"marcelpiva-org","password":"${{ inputs.github_token }}"}]}'
       run: |
-        # Debug: Verify token is present (show only length, not value)
+        # Debug: Verify tokens
         if [ -z "${SONAR_TOKEN}" ]; then
           echo "❌ ERROR: SONAR_TOKEN is empty!"
-          echo "This usually means the secret was not passed correctly to the action."
           exit 1
         fi
-        echo "✅ Token received (length: ${#SONAR_TOKEN})"
+        if [ -z "${NUGET_AUTH_TOKEN}" ]; then
+          echo "❌ ERROR: NUGET_AUTH_TOKEN is empty!"
+          exit 1
+        fi
+        echo "✅ SonarQube token received (length: ${#SONAR_TOKEN})"
+        echo "✅ NuGet token received (length: ${#NUGET_AUTH_TOKEN})"
 
+        # Configure NuGet with authentication
+        dotnet nuget add source https://nuget.pkg.github.com/marcelpiva-org/index.json \
+          --name github \
+          --username marcelpiva-org \
+          --password "${NUGET_AUTH_TOKEN}" \
+          --store-password-in-clear-text \
+          || echo "⚠️ NuGet source already exists"
+
+        # Begin SonarQube analysis
+        echo "🔍 Starting SonarQube analysis..."
         dotnet sonarscanner begin \
           /k:"${{ inputs.project_key }}" \
           /n:"${{ inputs.project_name }}" \
@@ -94,34 +97,28 @@ runs:
           /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
           /d:sonar.coverage.exclusions="${{ inputs.coverage_exclusions }}"
 
-    - name: 📦 Restore Dependencies
-      shell: bash
-      run: |
+        # Restore dependencies with authentication
+        echo "📦 Restoring dependencies..."
         dotnet restore ${{ inputs.solution_path }}
 
-    - name: 🏗️ Build Solution
-      shell: bash
-      run: |
+        # Build solution
+        echo "🏗️ Building solution..."
         dotnet build ${{ inputs.solution_path }} \
           --configuration Release \
           --no-restore
 
-    - name: 🧪 Run Tests with Coverage
-      shell: bash
-      run: |
+        # Run tests with coverage
+        echo "🧪 Running tests with coverage..."
         dotnet test ${{ inputs.solution_path }} \
           --configuration Release \
           --no-build \
           --collect:"XPlat Code Coverage" \
           --results-directory ./coverage \
           -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
-          || true
+          || echo "⚠️ Some tests failed, continuing..."
 
-    - name: 🔍 SonarQube Analysis - End
-      shell: bash
-      env:
-        SONAR_TOKEN: ${{ inputs.sonar_token }}
-      run: |
+        # End SonarQube analysis
+        echo "🔍 Completing SonarQube analysis..."
         dotnet sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
 
     - name: 📊 Quality Gate Check
