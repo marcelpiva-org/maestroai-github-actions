@@ -32,6 +32,9 @@ inputs:
     description: 'Source files to analyze'
     required: false
     default: '.'
+  github_token:
+    description: 'GitHub token for NuGet package authentication'
+    required: true
 
 runs:
   using: composite
@@ -77,6 +80,19 @@ runs:
           /d:sonar.token="${SONAR_TOKEN}" \
           /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
           /d:sonar.coverage.exclusions="${{ inputs.coverage_exclusions }}"
+
+    - name: 📦 Configure NuGet Authentication
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Configure GitHub Packages NuGet source with authentication
+        dotnet nuget add source https://nuget.pkg.github.com/marcelpiva-org/index.json \
+          --name github \
+          --username marcelpiva-org \
+          --password "${GITHUB_TOKEN}" \
+          --store-password-in-clear-text \
+          || echo "Source already exists or failed to add"
 
     - name: 📦 Restore Dependencies
       shell: bash
