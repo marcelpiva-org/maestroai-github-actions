@@ -41,7 +41,7 @@ on:
         description: 'Enable SonarQube analysis'
         required: false
         type: boolean
-        default: true
+        default: false
       sonar_host_url:
         description: 'SonarQube server URL'
         required: false
