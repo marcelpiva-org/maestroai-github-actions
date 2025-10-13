@@ -220,6 +220,10 @@ jobs:
     needs: [setup-and-lint]
     if: ${{ inputs.enable_sonarqube }}
 
+    permissions:
+      contents: read
+      packages: read
+
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
@@ -231,7 +235,7 @@ jobs:
       with:
         sonar_host_url: ${{ inputs.sonar_host_url }}
         sonar_token: ${{ secrets.SONARQUBE_TOKEN }}
-        github_token: ${{ secrets.PACKAGES_TOKEN }}
+        github_token: ${{ github.token }}
         project_key: maestroai-${{ inputs.service_name }}-app
         project_name: MaestroAI ${{ inputs.service_name }} Service
         solution_path: ${{ inputs.solution_path }}
