@@ -79,13 +79,24 @@ runs:
         echo "✅ SonarQube token received (length: ${#SONAR_TOKEN})"
         echo "✅ NuGet token received (length: ${#NUGET_AUTH_TOKEN})"
 
-        # Configure NuGet with authentication
-        dotnet nuget add source https://nuget.pkg.github.com/marcelpiva-org/index.json \
-          --name github \
-          --username marcelpiva-org \
-          --password "${NUGET_AUTH_TOKEN}" \
-          --store-password-in-clear-text \
-          || echo "⚠️ NuGet source already exists"
+        # Create nuget.config with GitHub Packages authentication
+        cat > nuget.config <<EOF
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <packageSources>
+            <clear />
+            <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+            <add key="github" value="https://nuget.pkg.github.com/marcelpiva-org/index.json" />
+          </packageSources>
+          <packageSourceCredentials>
+            <github>
+              <add key="Username" value="marcelpiva-org" />
+              <add key="ClearTextPassword" value="${NUGET_AUTH_TOKEN}" />
+            </github>
+          </packageSourceCredentials>
+        </configuration>
+        EOF
+        echo "✅ NuGet configuration created"
 
         # Begin SonarQube analysis
         echo "🔍 Starting SonarQube analysis..."
