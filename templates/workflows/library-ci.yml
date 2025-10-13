@@ -1,0 +1,50 @@
+name: Library CI/CD
+
+# Workflow CI/CD completo para libraries
+# Triggers: Push to main/develop, Pull Requests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  # ========================================
+  # CI Pipeline - All Branches
+  # ========================================
+  ci-pipeline:
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-library-ci.yml@main
+    with:
+      library_name: LIBRARY_NAME  # Substituir pelo nome da library (building-blocks, cache, etc.)
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: false  # Mudar para true quando testes forem adicionados
+      enable_sonarqube: true
+      sonar_host_url: 'http://172.19.0.7:9000'
+      publish_packages: false  # Manter false para evitar publicação automática em PRs
+    secrets: inherit
+
+  # ========================================
+  # Publish Packages - Main Branch Only
+  # ========================================
+  publish-on-main:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: marcelpiva-org/maestroai-github-actions/.github/workflows/dotnet-library-ci.yml@main
+    with:
+      library_name: LIBRARY_NAME  # Substituir pelo nome da library
+      dotnet_version: '8.0'
+      solution_path: 'src'
+      has_tests: false
+      enable_sonarqube: false  # Skip SonarQube na publicação (já rodou no CI)
+      publish_packages: true  # Publicar pacotes NuGet
+    secrets: inherit
