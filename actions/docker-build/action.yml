@@ -52,27 +52,30 @@ runs:
         username: ${{ inputs.registry_username || github.actor }}
         password: ${{ inputs.github_token }}
 
-    - name: Build and push container
-      uses: docker/build-push-action@v5
+    - name: Build and push container (with retry)
+      uses: nick-fields/retry-action@v3
       with:
-        context: ${{ inputs.context }}
-        file: ${{ inputs.dockerfile }}
-        platforms: linux/${{ inputs.architecture }}
-        push: true
-        tags: ${{ inputs.registry }}/${{ inputs.image_name }}:${{ inputs.tag }}-${{ inputs.architecture }}
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
-        secrets: |
-          github_token=${{ inputs.packages_token }}
-        labels: |
-          org.opencontainers.image.title=${{ inputs.image_name }} (${{ inputs.architecture }})
-          org.opencontainers.image.description=MaestroAI microservice container
-          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.sha }}
-          org.opencontainers.image.version=${{ inputs.tag }}
-        cache-from: |
-          type=gha,scope=buildkit-${{ inputs.architecture }}-${{ github.ref_name }}
-          type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache-${{ inputs.architecture }}
-        cache-to: |
-          type=gha,mode=max,scope=buildkit-${{ inputs.architecture }}-${{ github.ref_name }}
-          type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache-${{ inputs.architecture }},mode=max
+        timeout_minutes: 30
+        max_attempts: 3
+        retry_wait_seconds: 60
+        warning_on_retry: true
+        command: |
+          docker buildx build \
+            --platform=linux/${{ inputs.architecture }} \
+            --file=${{ inputs.dockerfile }} \
+            --tag=${{ inputs.registry }}/${{ inputs.image_name }}:${{ inputs.tag }}-${{ inputs.architecture }} \
+            --build-arg=BUILDKIT_INLINE_CACHE=1 \
+            --secret=id=github_token,env=PACKAGES_TOKEN \
+            --label="org.opencontainers.image.title=${{ inputs.image_name }} (${{ inputs.architecture }})" \
+            --label="org.opencontainers.image.description=MaestroAI microservice container" \
+            --label="org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label="org.opencontainers.image.revision=${{ github.sha }}" \
+            --label="org.opencontainers.image.version=${{ inputs.tag }}" \
+            --cache-from=type=gha,scope=buildkit-${{ inputs.architecture }}-${{ github.ref_name }} \
+            --cache-from=type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache-${{ inputs.architecture }} \
+            --cache-to=type=gha,mode=max,scope=buildkit-${{ inputs.architecture }}-${{ github.ref_name }} \
+            --cache-to=type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache-${{ inputs.architecture }},mode=max \
+            --push \
+            ${{ inputs.context }}
+      env:
+        PACKAGES_TOKEN: ${{ inputs.packages_token }}

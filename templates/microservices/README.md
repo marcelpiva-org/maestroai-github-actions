@@ -166,7 +166,7 @@ with:
 2. ✅ Problemas comuns (secrets, TODOs críticos)
 3. ✅ Atualiza CHANGELOG.md automaticamente
 
-**Bypass**: `git commit --no-verify` (emergências)
+**⚠️ IMPORTANT**: Do NOT use `git commit --no-verify` - this bypasses critical validations.
 
 **Exemplo de saída**:
 ```
@@ -189,7 +189,7 @@ Build succeeded. 0 Warning(s), 0 Error(s)
 3. 🔨 **Build Check**: Valida build completo
 4. 📚 **Docs Check**: Verifica README.md existe
 
-**Bypass**: `git push --no-verify` (PRs aprovados, automation)
+**⚠️ IMPORTANT**: Do NOT use `git push --no-verify` - this undermines Git Flow. Use feature branches and PRs instead.
 
 **Branch Protection**:
 ```bash
@@ -438,7 +438,7 @@ A: Otimização custo/velocidade. Fast (3min) para feedback rápido, Complete (1
 A: Sim! Prefira customizar via **inputs** (não duplicar lógica). Workflows reusáveis centralizados facilitam manutenção.
 
 **Q: Hooks são obrigatórios?**
-A: Fortemente recomendados. Podem ser bypassed (`--no-verify`) em emergências, mas evite.
+A: Fortemente recomendados. **NEVER** use `--no-verify` to bypass - this undermines Git Flow and CI/CD validation. If hooks fail, fix the issue, not bypass the hook.
 
 **Q: Como funciona branch protection sem GitHub Pro?**
 A: Via GitHub Actions (`branch-protection-gate.yml`). Bloqueia PRs diretos mas não force push. 90% efetivo, custo $0.
