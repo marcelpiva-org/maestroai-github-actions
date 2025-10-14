@@ -65,7 +65,6 @@ runs:
       env:
         SONAR_TOKEN: ${{ inputs.sonar_token }}
         NUGET_AUTH_TOKEN: ${{ inputs.github_token }}
-        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials":[{"endpoint":"https://nuget.pkg.github.com/marcelpiva-org/index.json","username":"marcelpiva-org","password":"${{ inputs.github_token }}"}]}'
       run: |
         # Debug: Verify tokens
         if [ -z "${SONAR_TOKEN}" ]; then
@@ -79,24 +78,33 @@ runs:
         echo "✅ SonarQube token received (length: ${#SONAR_TOKEN})"
         echo "✅ NuGet token received (length: ${#NUGET_AUTH_TOKEN})"
 
-        # Create nuget.config with GitHub Packages authentication
-        cat > nuget.config <<EOF
+        # Export NUGET_AUTH_TOKEN for dotnet commands
+        # This allows nuget.config to use %NUGET_AUTH_TOKEN% variable
+        export NUGET_AUTH_TOKEN="${NUGET_AUTH_TOKEN}"
+
+        # Verify nuget.config exists in repository
+        if [ ! -f "nuget.config" ]; then
+          echo "⚠️  WARNING: nuget.config not found in repository"
+          echo "Creating default nuget.config..."
+          cat > nuget.config <<EOF
         <?xml version="1.0" encoding="utf-8"?>
         <configuration>
           <packageSources>
             <clear />
             <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
-            <add key="github" value="https://nuget.pkg.github.com/marcelpiva-org/index.json" />
+            <add key="github" value="https://nuget.pkg.github.com/marcelpiva-org/index.json" protocolVersion="3" />
           </packageSources>
           <packageSourceCredentials>
             <github>
               <add key="Username" value="marcelpiva-org" />
-              <add key="ClearTextPassword" value="${NUGET_AUTH_TOKEN}" />
+              <add key="ClearTextPassword" value="%NUGET_AUTH_TOKEN%" />
             </github>
           </packageSourceCredentials>
         </configuration>
         EOF
-        echo "✅ NuGet configuration created"
+        else
+          echo "✅ Using existing nuget.config from repository"
+        fi
 
         # Begin SonarQube analysis
         echo "🔍 Starting SonarQube analysis..."
@@ -112,21 +120,26 @@ runs:
         echo "📦 Restoring dependencies..."
         dotnet restore ${{ inputs.solution_path }}
 
-        # Build solution
+        # Build solution (reuse from previous build job when possible)
         echo "🏗️ Building solution..."
         dotnet build ${{ inputs.solution_path }} \
           --configuration Release \
           --no-restore
 
-        # Run tests with coverage
-        echo "🧪 Running tests with coverage..."
-        dotnet test ${{ inputs.solution_path }} \
-          --configuration Release \
-          --no-build \
-          --collect:"XPlat Code Coverage" \
-          --results-directory ./coverage \
-          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
-          || echo "⚠️ Some tests failed, continuing..."
+        # Skip tests if already run in unit-tests job to save resources
+        # SonarQube will pick up coverage from previous test run if available
+        if [ -d "./coverage" ] && [ "$(ls -A ./coverage 2>/dev/null)" ]; then
+          echo "✅ Using existing test coverage from unit-tests job"
+        else
+          echo "🧪 Running tests with coverage..."
+          dotnet test ${{ inputs.solution_path }} \
+            --configuration Release \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage \
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
+            || echo "⚠️ Some tests failed, continuing..."
+        fi
 
         # End SonarQube analysis
         echo "🔍 Completing SonarQube analysis..."
