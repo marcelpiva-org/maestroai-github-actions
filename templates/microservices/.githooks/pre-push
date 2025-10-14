@@ -36,10 +36,12 @@ do
         echo ""
         echo -e "${BLUE}📚 Documentation:${NC}"
         echo -e "   • Git Flow:           docs/GIT-FLOW.md"
+        echo -e "   • Git Flow Testing:   docs/GIT-FLOW-TESTING.md"
         echo -e "   • Conventional Commits: docs/CONVENTIONAL-COMMITS.md"
         echo ""
-        echo -e "${YELLOW}💡 If you need to force push (emergency only):${NC}"
-        echo -e "   ${RED}git push --no-verify origin ${branch_name}${NC}"
+        echo -e "${RED}⛔ IMPORTANT: Do NOT use --no-verify to bypass this protection${NC}"
+        echo -e "   Using --no-verify undermines Git Flow and invalidates CI/CD testing."
+        echo -e "   If you believe this block is incorrect, contact DevSecOps team."
         echo ""
 
         exit 1

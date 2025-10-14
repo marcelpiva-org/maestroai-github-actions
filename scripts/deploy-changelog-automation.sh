@@ -205,14 +205,18 @@ echo -e "   ${RED}✗${NC} Failed: ${failed_repos}"
 echo ""
 
 if [ $deployed_repos -gt 0 ]; then
-    echo -e "${CYAN}📝 Next Steps:${NC}"
+    echo -e "${CYAN}📝 Next Steps (following proper Git Flow):${NC}"
     echo -e "   1. Review the commits in each repository"
-    echo -e "   2. Push changes to GitHub:"
-    echo -e "      ${GREEN}git push --no-verify origin main${NC}"
-    echo -e "   3. Verify workflows in GitHub Actions tab"
+    echo -e "   2. Push feature branches to GitHub:"
+    echo -e "      ${GREEN}cd <repository-path>${NC}"
+    echo -e "      ${GREEN}git push origin <feature-branch-name>${NC}"
+    echo -e "   3. Create Pull Requests to develop/main"
+    echo -e "   4. After PR review and approval, merge"
+    echo -e "   5. Verify workflows in GitHub Actions tab"
     echo ""
-    echo -e "${YELLOW}⚠️  Note:${NC} Changes are committed but NOT pushed yet."
+    echo -e "${YELLOW}⚠️  Note:${NC} Changes are committed locally but NOT pushed yet."
     echo -e "   Review before pushing to ensure correctness."
+    echo -e "   ${BLUE}Documentation:${NC} docs/GIT-FLOW-TESTING.md"
     echo ""
 fi
 
