@@ -419,7 +419,7 @@ jobs:
         ignore_unfixed: 'true'  # Ignore vulnerabilities without fixes
         format: 'sarif'
         output_file: 'trivy-results.sarif'
-        upload_sarif: 'true'
+        upload_sarif: 'false'  # Disabled - requires GitHub Advanced Security (Team/Enterprise)
         registry_username: ${{ github.actor }}
         registry_password: ${{ secrets.GITHUB_TOKEN }}
 
