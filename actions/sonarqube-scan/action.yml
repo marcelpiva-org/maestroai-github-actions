@@ -78,27 +78,24 @@ runs:
         echo "✅ SonarQube token received (length: ${#SONAR_TOKEN})"
         echo "✅ NuGet token received (length: ${#NUGET_AUTH_TOKEN})"
 
-        # Create nuget.config with embedded credentials
-        # Note: Environment variables in XML format (%VAR%) don't work on Linux
-        # Solution: Inject the actual token value directly into nuget.config
-        echo "📝 Creating nuget.config with GitHub Packages authentication..."
-        cat > nuget.config <<EOF
-        <?xml version="1.0" encoding="utf-8"?>
-        <configuration>
-          <packageSources>
-            <clear />
-            <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
-            <add key="github" value="https://nuget.pkg.github.com/marcelpiva-org/index.json" protocolVersion="3" />
-          </packageSources>
-          <packageSourceCredentials>
-            <github>
-              <add key="Username" value="marcelpiva-org" />
-              <add key="ClearTextPassword" value="${NUGET_AUTH_TOKEN}" />
-            </github>
-          </packageSourceCredentials>
-        </configuration>
-        EOF
-        echo "✅ NuGet configuration created with authentication"
+        # Configure NuGet authentication using dotnet commands
+        # This approach is more reliable than nuget.config for GitHub Packages
+        echo "📝 Configuring NuGet authentication..."
+
+        # Remove any existing GitHub source
+        dotnet nuget remove source github 2>/dev/null || true
+
+        # Add GitHub Packages source with authentication
+        dotnet nuget add source "https://nuget.pkg.github.com/marcelpiva-org/index.json" \
+          --name github \
+          --username marcelpiva-org \
+          --password "${NUGET_AUTH_TOKEN}" \
+          --store-password-in-clear-text
+
+        echo "✅ NuGet source configured with authentication"
+
+        # Verify source was added
+        dotnet nuget list source
 
         # Begin SonarQube analysis
         echo "🔍 Starting SonarQube analysis..."
