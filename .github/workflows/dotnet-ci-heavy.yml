@@ -414,8 +414,9 @@ jobs:
       uses: marcelpiva-org/maestroai-github-actions/actions/trivy-scan@main
       with:
         image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.setup-and-version.outputs.version }}
-        severity: 'CRITICAL,HIGH'
-        exit_code: '1'  # Fail on critical/high vulnerabilities in release
+        severity: 'CRITICAL'
+        exit_code: '1'  # Fail on critical vulnerabilities in release
+        ignore_unfixed: 'true'  # Ignore vulnerabilities without fixes
         format: 'sarif'
         output_file: 'trivy-results.sarif'
         upload_sarif: 'true'

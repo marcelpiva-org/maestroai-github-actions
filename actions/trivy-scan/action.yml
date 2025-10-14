@@ -32,6 +32,10 @@ inputs:
     description: 'Registry password/token for authentication (optional)'
     required: false
     default: ''
+  ignore_unfixed:
+    description: 'Ignore vulnerabilities without fixes available'
+    required: false
+    default: 'false'
 outputs:
   vulnerabilities_found:
     description: 'Number of vulnerabilities found'
@@ -73,9 +77,8 @@ runs:
 
         echo "🔍 Scanning image: ${{ inputs.image }}"
 
-        # Run Trivy scan with credentials via env vars
-        # Note: Multi-arch manifests require platform specification
-        trivy image \
+        # Build Trivy command with optional --ignore-unfixed flag
+        TRIVY_CMD="trivy image \
           --format ${{ inputs.format }} \
           --output ${{ inputs.output_file }} \
           --severity ${{ inputs.severity }} \
@@ -83,8 +86,17 @@ runs:
           --vuln-type os,library \
           --scanners vuln,secret,config \
           --platform linux/amd64 \
-          --timeout 10m \
-          ${{ inputs.image }}
+          --timeout 10m"
+
+        # Add --ignore-unfixed if enabled
+        if [ "${{ inputs.ignore_unfixed }}" = "true" ]; then
+          echo "ℹ️  Ignoring unfixed vulnerabilities"
+          TRIVY_CMD="$TRIVY_CMD --ignore-unfixed"
+        fi
+
+        # Run Trivy scan with credentials via env vars
+        # Note: Multi-arch manifests require platform specification
+        $TRIVY_CMD ${{ inputs.image }}
 
         echo "✅ Trivy scan completed"
 
