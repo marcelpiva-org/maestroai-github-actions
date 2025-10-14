@@ -56,7 +56,7 @@ on:
         description: 'SonarQube server URL'
         required: false
         type: string
-        default: 'http://localhost:9000'
+        default: 'http://172.19.0.7:9000'
 
 permissions:
   contents: read
