@@ -78,15 +78,11 @@ runs:
         echo "✅ SonarQube token received (length: ${#SONAR_TOKEN})"
         echo "✅ NuGet token received (length: ${#NUGET_AUTH_TOKEN})"
 
-        # Export NUGET_AUTH_TOKEN for dotnet commands
-        # This allows nuget.config to use %NUGET_AUTH_TOKEN% variable
-        export NUGET_AUTH_TOKEN="${NUGET_AUTH_TOKEN}"
-
-        # Verify nuget.config exists in repository
-        if [ ! -f "nuget.config" ]; then
-          echo "⚠️  WARNING: nuget.config not found in repository"
-          echo "Creating default nuget.config..."
-          cat > nuget.config <<EOF
+        # Create nuget.config with embedded credentials
+        # Note: Environment variables in XML format (%VAR%) don't work on Linux
+        # Solution: Inject the actual token value directly into nuget.config
+        echo "📝 Creating nuget.config with GitHub Packages authentication..."
+        cat > nuget.config <<EOF
         <?xml version="1.0" encoding="utf-8"?>
         <configuration>
           <packageSources>
@@ -97,14 +93,12 @@ runs:
           <packageSourceCredentials>
             <github>
               <add key="Username" value="marcelpiva-org" />
-              <add key="ClearTextPassword" value="%NUGET_AUTH_TOKEN%" />
+              <add key="ClearTextPassword" value="${NUGET_AUTH_TOKEN}" />
             </github>
           </packageSourceCredentials>
         </configuration>
         EOF
-        else
-          echo "✅ Using existing nuget.config from repository"
-        fi
+        echo "✅ NuGet configuration created with authentication"
 
         # Begin SonarQube analysis
         echo "🔍 Starting SonarQube analysis..."
