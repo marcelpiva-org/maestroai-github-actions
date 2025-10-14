@@ -131,7 +131,7 @@ jobs:
         solution_path: ${{ inputs.solution_path }}
 
   # ========================================
-  # Job 3: Unit Tests (Parallel)
+  # Job 3: Unit Tests
   # ========================================
   unit-tests:
     name: 🧪 Unit Tests
@@ -151,16 +151,9 @@ jobs:
         packages_token: ${{ secrets.NUGET_AUTH_TOKEN }}
 
     - name: 🧪 Run Unit Tests with Coverage
-      run: |
-        echo "🧪 Running unit tests with coverage..."
-        dotnet test ${{ inputs.solution_path }} \
-          --configuration Release \
-          --no-build \
-          --collect:"XPlat Code Coverage" \
-          --results-directory ./coverage \
-          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
-
-        echo "✅ Unit tests completed"
+      uses: marcelpiva-org/maestroai-github-actions/actions/test-dotnet@main
+      with:
+        solution_path: ${{ inputs.solution_path }}
 
     - name: 📊 Upload Coverage Report
       uses: actions/upload-artifact@v4
